@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  # OIDC Auth Proxy
+  oidc-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: traefik-oidc-auth
+    ports:
+      - "8080:8080"  # Main proxy port
+      - "9090:9090"  # Metrics port
+    environment:
+      - CONFIG_FILE=/config/config.json
+      - LISTEN_ADDR=:8080
+      - METRICS_ADDR=:9090
+      - UPSTREAM_URL=http://whoami:80
+    volumes:
+      - ./config.json:/config/config.json:ro
+    depends_on:
+      - whoami
+    networks:
+      - oidc-network
+
+  # Sample upstream service
+  whoami:
+    image: traefik/whoami
+    container_name: whoami
+    networks:
+      - oidc-network
+
+  # Optional: Keycloak for testing
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2.5
+    container_name: keycloak
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    command:
+      - start-dev
+    ports:
+      - "8000:8080"
+    networks:
+      - oidc-network
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9091:9090"
+    networks:
+      - oidc-network
+
+networks:
+  oidc-network:
+    driver: bridge

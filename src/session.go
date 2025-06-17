@@ -1,6 +1,7 @@
 package src
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -28,7 +29,7 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 				AccessToken: authHeader,
 			}
 
-			ok, claims, err := toa.validateToken(session)
+			ok, claims, err := toa.validateTokenWithContext(req.Context(), session)
 
 			if ok {
 				return session, false, claims, err
@@ -50,7 +51,7 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 				AccessToken: authCookie.Value,
 			}
 
-			ok, claims, err := toa.validateToken(session)
+			ok, claims, err := toa.validateTokenWithContext(req.Context(), session)
 
 			if ok {
 				return session, false, claims, err
@@ -72,7 +73,7 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 
 	toa.logger.Log(logging.LevelDebug, "A session is present for the request and will be used.")
 
-	session, claims, updatedSession, err := validateSessionTicket(toa, sessionTicket)
+	session, claims, updatedSession, err := validateSessionTicketWithContext(req.Context(), toa, sessionTicket)
 
 	if err != nil {
 		return nil, false, claims, fmt.Errorf("failed to validate session ticket: %s", err.Error())
@@ -82,6 +83,10 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 }
 
 func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*session.SessionState, map[string]interface{}, *session.SessionState, error) {
+	return validateSessionTicketWithContext(context.Background(), toa, encryptedTicket)
+}
+
+func validateSessionTicketWithContext(ctx context.Context, toa *TraefikOidcAuth, encryptedTicket string) (*session.SessionState, map[string]interface{}, *session.SessionState, error) {
 	plainSessionTicket, err := utils.Decrypt(encryptedTicket, toa.Config.Secret)
 	if err != nil {
 		toa.logger.Log(logging.LevelError, "Failed to decrypt session ticket: %v", err.Error())
@@ -98,7 +103,7 @@ func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*sessi
 		return nil, nil, nil, nil
 	}
 
-	success, claims, err := toa.validateToken(session)
+	success, claims, err := toa.validateTokenWithContext(ctx, session)
 
 	if !success || err != nil {
 		if session.RefreshToken != "" {
@@ -125,7 +130,7 @@ func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*sessi
 				}
 			}
 
-			success, claims, err = toa.validateToken(session)
+			success, claims, err = toa.validateTokenWithContext(ctx, session)
 
 			if !success || err != nil {
 				toa.logger.Log(logging.LevelError, "Failed to validate renewed session: %v", err)
@@ -144,6 +149,10 @@ func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*sessi
 }
 
 func (toa *TraefikOidcAuth) validateToken(session *session.SessionState) (bool, map[string]interface{}, error) {
+	return toa.validateTokenWithContext(context.Background(), session)
+}
+
+func (toa *TraefikOidcAuth) validateTokenWithContext(ctx context.Context, session *session.SessionState) (bool, map[string]interface{}, error) {
 	var token string
 
 	// Little bit hacky. In case the request contains a custom AuthorizationHeader or Cookie, only AccessToken is used.
@@ -161,11 +170,24 @@ func (toa *TraefikOidcAuth) validateToken(session *session.SessionState) (bool, 
 		}
 	}
 
-	if toa.Config.Provider.TokenValidation == "Introspection" {
-		return toa.introspectToken(token)
+	// Skip validation if disabled
+	if toa.Config.Provider.DisableTokenValidationBool {
+		toa.logger.Log(logging.LevelDebug, "Token validation is disabled, extracting claims without validation")
+		// Parse token without validation to extract claims
+		claims, err := toa.parseTokenWithoutValidation(token)
+		if err != nil {
+			toa.logger.Log(logging.LevelWarn, "Failed to parse token claims without validation: %v", err)
+			// Return empty claims on parse error
+			return true, make(map[string]interface{}), nil
+		}
+		return true, claims, nil
 	}
 
-	return toa.validateTokenLocally(token)
+	if toa.Config.Provider.TokenValidation == "Introspection" {
+		return toa.introspectTokenWithContext(ctx, token)
+	}
+
+	return toa.validateTokenLocallyWithContext(ctx, token)
 }
 
 func (toa *TraefikOidcAuth) storeSessionAndAttachCookie(session *session.SessionState, rw http.ResponseWriter) {

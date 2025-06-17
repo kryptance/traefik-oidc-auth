@@ -1,0 +1,54 @@
+{
+  "log_level": "info",
+  "secret": "change-this-to-a-random-32-char-string",
+  "provider": {
+    "url": "http://keycloak:8080/realms/master",
+    "client_id": "traefik-oidc-auth",
+    "client_secret": "your-client-secret",
+    "insecure_skip_verify": "true"
+  },
+  "scopes": ["openid", "profile", "email"],
+  "callback_uri": "http://localhost:8080/oauth2/callback",
+  "login_uri": "/oauth2/login",
+  "logout_uri": "/oauth2/logout",
+  "post_login_redirect_uri": "/",
+  "post_logout_redirect_uri": "/",
+  "cookie_name_prefix": "oidc",
+  "session_cookie": {
+    "path": "/",
+    "domain": "",
+    "secure": false,
+    "http_only": true,
+    "same_site": "lax"
+  },
+  "metrics": {
+    "enabled": true,
+    "prefix": "oidc_auth",
+    "path": "/metrics"
+  },
+  "headers": [
+    {
+      "name": "X-User-Email",
+      "value": "{{ .claims.email }}"
+    },
+    {
+      "name": "X-User-ID", 
+      "value": "{{ .claims.sub }}"
+    },
+    {
+      "name": "X-User-Name",
+      "value": "{{ .claims.name }}"
+    }
+  ],
+  "javascript_request_detection": {
+    "headers": {
+      "X-Requested-With": ["XMLHttpRequest"],
+      "Sec-Fetch-Mode": ["cors", "same-origin"],
+      "Content-Type": ["application/json"]
+    }
+  },
+  "error_pages": {
+    "unauthenticated": {},
+    "unauthorized": {}
+  }
+}

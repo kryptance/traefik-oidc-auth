@@ -1,0 +1,232 @@
+{
+  "realm": "test",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "privateKey": "MIIEowIBAAKCAQEAyZ3GJtMDvlMxWnlz0hVAK3mJNuKTL7N4YGdh0mAHDmGGI0EbDU13IavbPcBJvDVSagvpGUIn0xWvMZaHPr8gWrn3ip0Yd1xLk+4R0Yn/wCFQlgI7D8Kq29qNQfDNTUaAi/cVgFJuZpYYXW0s0A3VoW6ipL4mDJ6SqoR9KdMDWRtT0FVVL4mtxbhH2cU8J0cD5Q8YYBdzIanb3r0cGVlIvkhiDGm7JU5vvlQwTn2UJvTCCCSOtiQUVmvyBEC5G0sDEcLDhx6z1ebH0rCEOKwhRC8J+Lcb7R+CjVwQQWyup1L7NZHdHWLIJPCGQs4pzKGFSFAFjt1Y1rwqxR2w/wIDAQABAoIBAD6hy7awKhmKBV3DCYqKQ9yBIdQkgD7zFR7PjC2LDKzNFJGAPvBoJHivpTQQe7CdpsVDmQb8A1h5MvNcBigFUlMFa5s0dSIHItZ3S+3u6cCF+FjbSnCVZhEH3s3lWFh3cHm3gwT6ttrnO+cKD3vABwBPcUfks7H7PqPdWmoZMRBYBcCISxRGNI1Gt8uPpDYJMlJZ1vq9w+CjQJWhVPaiLhWEjJlIMVEZumHDApjkEhM9z3qPQsR8LxLt2kJPqMclvmahVJKfF0Gvf4qH9lOYGSQYhin4OVCh0lABLyW1AK0xz3cp66V+XiV5dYLYaL8dB2KBhfCNCid6fJeGlTIiCgECgYEA5klAhnPbekKRK0z1CqVQbQw7lGGVvO1xjbWB4ynPKmL7wDp3lFhMQLLVRKFf6pMKb3Y5cg9NaEr9wmVlDZYFBpJ8xzwKaDYqaQbsGC3o5fZVJN+YTkN+J5TJdLQLCiPOPovhQ8OF2gQsf9HDlSJxJOXPQmeHdNHlEYGNblQamP8CgYEA4GgxZ/vdVqLIplzW6LZWEyQRKgdBC26GdJmzqmtJy7VrpCEQZhJR7fvhVg0ba3BU/c1fWCrVLcpVGbPONpFzpBH9ghDZH+6SWmVQHCRbBRNFPjxQgYj2A8PQFQ7KAaFl3Sw9nLW1FU6dkgrYb5rAYZ4qC5hG+Yj/DKWL8y7wTgECgYBRcBkbQQlnnlF3dYflwuLOhVKqsV+jdr5GHbWUJNO2wVLJLRO8KS4hgFatpuqQFeKYqJkQ1AYpJpSJYGE2Y5L5FAHYZQalXC9eWBWvUkcaoCmWooHPBOiHNefNYXXXBZdMlQPLqVav5kFT5ryYhWC0yKkVMb1vWNLQGyR4kYa3rwKBgQCNLpF2ZIDTytQx0BWHs5p1UGu1JXZXR6EohqT3Lp4jJSYd5snhFJlUV7dVOlJ4s+iu5nD3LLHqMGHujKlOWM2jL6QVJCp/NR/EAuqVPfaOilJHQNTdGbYEps7H0bBoKC9PFaRKBM9G3M6p5Qhe0kuWoRw7RksiEv3UNBQoKaVPAQKBgD0cCLQPSV7oDH6hqOCRNnP2iE7Ep3cQ2dxVlt12G9qPCWhcYFOAE6vyVFOCpfvIjNxG+MqYQMCx3K4Ea+FHpI6BKlacC7k3DEC3DC2cWBVZVZLNBmJRm5bqB8eiGdJl7O4KZ2w4wpFgQSX9BoFMdIAIR0sosLX0FpBD0PYxnF6A",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyZ3GJtMDvlMxWnlz0hVAK3mJNuKTL7N4YGdh0mAHDmGGI0EbDU13IavbPcBJvDVSagvpGUIn0xWvMZaHPr8gWrn3ip0Yd1xLk+4R0Yn/wCFQlgI7D8Kq29qNQfDNTUaAi/cVgFJuZpYYXW0s0A3VoW6ipL4mDJ6SqoR9KdMDWRtT0FVVL4mtxbhH2cU8J0cD5Q8YYBdzIanb3r0cGVlIvkhiDGm7JU5vvlQwTn2UJvTCCCSOtiQUVmvyBEC5G0sDEcLDhx6z1ebH0rCEOKwhRC8J+Lcb7R+CjVwQQWyup1L7NZHdHWLIJPCGQs4pzKGFSFAFjt1Y1rwqxR2w/wIDAQAB",
+  "requiredCredentials": ["password"],
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "email": "testuser@example.com",
+      "firstName": "Test",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "testpass"
+        }
+      ],
+      "realmRoles": ["user"],
+      "clientRoles": {
+        "test-client": ["user"]
+      }
+    },
+    {
+      "username": "adminuser",
+      "enabled": true,
+      "email": "admin@example.com",
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "adminpass"
+        }
+      ],
+      "realmRoles": ["admin", "user"],
+      "clientRoles": {
+        "test-client": ["admin", "user"]
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "User role"
+      },
+      {
+        "name": "admin",
+        "description": "Admin role"
+      }
+    ]
+  },
+  "scopeMappings": [
+    {
+      "clientScope": "offline_access",
+      "roles": ["offline_access"]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "openid",
+      "description": "OpenID Connect scope for requesting an ID Token",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      }
+    },
+    {
+      "name": "profile",
+      "description": "OpenID Connect built-in scope: profile",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "profile",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "profile",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "profile",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "description": "OpenID Connect built-in scope: email",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": [
+    "profile",
+    "email",
+    "roles"
+  ],
+  "clients": [
+    {
+      "clientId": "test-client",
+      "name": "Test Client",
+      "rootUrl": "http://localhost:8080",
+      "adminUrl": "http://localhost:8080",
+      "baseUrl": "http://localhost:8080",
+      "surrogateAuthRequired": false,
+      "enabled": true,
+      "alwaysDisplayInConsole": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "test-secret",
+      "redirectUris": [
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8080"
+      ],
+      "notBefore": 0,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "publicClient": false,
+      "frontchannelLogout": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8080/*",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "use.refresh.tokens": "true",
+        "oidc.ciba.grant.enabled": "false",
+        "backchannel.logout.session.required": "true",
+        "client_credentials.use_refresh_token": "false",
+        "require.pushed.authorization.requests": "false",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "display.on.consent.screen": "false",
+        "token.response.type.bearer.lower-case": "false"
+      },
+      "authenticationFlowBindingOverrides": {},
+      "fullScopeAllowed": true,
+      "nodeReRegistrationTimeout": -1,
+      "protocolMappers": [
+        {
+          "name": "Client ID",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientId",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "client_id",
+            "jsonType.label": "String"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xXSSProtection": "1; mode=block",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  },
+  "smtpServer": {},
+  "eventsEnabled": false,
+  "eventsListeners": ["jboss-logging"],
+  "enabledEventTypes": [],
+  "adminEventsEnabled": false,
+  "adminEventsDetailsEnabled": false,
+  "identityProviders": [],
+  "identityProviderMappers": [],
+  "internationalizationEnabled": false,
+  "supportedLocales": [],
+  "authenticationFlows": [],
+  "authenticatorConfig": [],
+  "requiredActions": [],
+  "browserFlow": "browser",
+  "registrationFlow": "registration",
+  "directGrantFlow": "direct grant",
+  "resetCredentialsFlow": "reset credentials",
+  "clientAuthenticationFlow": "clients",
+  "dockerAuthenticationFlow": "docker auth",
+  "attributes": {},
+  "keycloakVersion": "25.0.0",
+  "userManagedAccessAllowed": false,
+  "organizationsEnabled": false
+}

@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2.5
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8000
+      KC_HOSTNAME_STRICT: 'false'
+      KC_HOSTNAME_STRICT_HTTPS: 'false'
+      KC_HTTP_ENABLED: 'true'
+    command:
+      - start-dev
+      - --import-realm
+    volumes:
+      - ./test-realm.json:/opt/keycloak/data/import/test-realm.json
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/realms/test"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--log.level=DEBUG"
+      - "--experimental.plugins.traefik-oidc-auth.modulename=github.com/sevensolutions/traefik-oidc-auth"
+      - "--experimental.plugins.traefik-oidc-auth.version=v0.0.1"
+    ports:
+      - "8080:80"
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../../:/plugins-local/src/github.com/sevensolutions/traefik-oidc-auth
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  whoami:
+    image: traefik/whoami
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.whoami.entrypoints=web"
+      - "traefik.http.routers.whoami.middlewares=oidc-auth"
+      
+      # OIDC middleware configuration with tracing
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.log_level=DEBUG"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.provider.url=http://keycloak:8000/realms/test"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.provider.client_id=test-client"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.provider.client_secret=test-secret"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.provider.use_pkce=false"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.scopes[0]=openid"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.scopes[1]=profile"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.scopes[2]=email"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.callback_uri=/oauth2/callback"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.login_uri=/oauth2/login"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.logout_uri=/oauth2/logout"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.secret=supersecret123456789012345678901"
+      
+      # JavaScript request detection
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.javascript_request_detection.enabled=true"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.javascript_request_detection.headers.x-requested-with[0]=xmlhttprequest"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.javascript_request_detection.headers.sec-fetch-mode[0]=cors"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.javascript_request_detection.headers.accept[0]=application/json"
+      
+      # Metrics configuration
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.metrics.enabled=true"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.metrics.path=/metrics"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.metrics.prefix=oidc_auth_"
+      
+      # OpenTelemetry tracing configuration
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.tracing.enabled=${TRACING_ENABLED:-true}"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.tracing.service_name=${TRACING_SERVICE_NAME:-traefik-oidc-auth-test}"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.tracing.sample_rate=1.0"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.tracing.otlp_endpoint=${TRACING_OTLP_ENDPOINT:-host.docker.internal:4318}"
+      - "traefik.http.middlewares.oidc-auth.plugin.traefik-oidc-auth.tracing.detailed_spans=${TRACING_DETAILED_SPANS:-true}"

@@ -1,0 +1,254 @@
+# Example Traefik configuration for local development with all possible options
+experimental:
+  localPlugins:
+    traefik-oidc-auth:
+      moduleName: github.com/sevensolutions/traefik-oidc-auth
+
+# Define the middleware
+http:
+  middlewares:
+    oidc-auth:
+      plugin:
+        traefik-oidc-auth:
+          # Logging configuration
+          log_level: "debug"  # Options: DEBUG, INFO, WARN, ERROR
+          
+          # Secret for encrypting session data (REQUIRED - use a random 32 character string)
+          secret: "MLFs4TT99kOOq8h3UAVRtYoCTDYXiRcZ"  # CHANGE THIS IN PRODUCTION!
+          
+          # OIDC Provider configuration
+          provider:
+            url: "https://your-oidc-provider.com"  # Your OIDC provider URL
+            client_id: "your-client-id"
+            client_secret: "your-client-secret"
+            
+            # Advanced provider options
+            insecure_skip_verify: "false"  # Skip TLS verification (not recommended)
+            ca_bundle: ""  # Inline CA bundle for custom certificates
+            ca_bundle_file: ""  # Path to CA bundle file
+            
+            # PKCE configuration
+            use_pkce: "false"  # Enable PKCE for public clients
+            
+            # Token validation options
+            verification_token: "AccessToken"  # Options: AccessToken, IdToken, Introspection
+            disable_token_validation: "false"  # Disable token validation (if backend does validation)
+            
+            # Issuer validation
+            validate_issuer: "true"
+            valid_issuer: ""  # Expected issuer value (auto-detected if empty)
+            
+            # Audience validation
+            validate_audience: "true"
+            valid_audience: ""  # Expected audience value (defaults to client_id)
+          
+          # OAuth2/OIDC flow configuration
+          scopes:
+            - openid
+            - profile
+            - email
+            # Add any additional scopes your provider supports
+            # - groups
+            # - offline_access
+          
+          # Callback configuration
+          callback_uri: "/oauth2/callback"  # Can be relative or absolute URL
+          
+          # Login/logout configuration
+          login_uri: "/oidc/login"  # Path to initiate login
+          post_login_redirect_uri: "/"  # Default redirect after login
+          valid_post_login_redirect_uris:  # Allowed redirect URIs after login
+            - "/"
+            - "/dashboard"
+            - "https://app.example.com/*"
+            
+          logout_uri: "/logout"  # Path to initiate logout
+          post_logout_redirect_uri: "/"  # Default redirect after logout
+          valid_post_logout_redirect_uris:  # Allowed redirect URIs after logout
+            - "/"
+            - "/goodbye"
+            - "https://example.com"
+          
+          # Cookie configuration
+          cookie_name_prefix: "TraefikOidcAuth"  # Prefix for all cookies
+          session_cookie:
+            path: "/"
+            domain: ""  # Leave empty for current domain
+            secure: true  # HTTPS only
+            http_only: true  # Not accessible via JavaScript
+            same_site: "default"  # Options: default, lax, strict, none
+            max_age: 0  # Session cookie (0) or persistent (seconds)
+          
+          # Authorization behavior
+          unauthorized_behavior: "Challenge"  # Options: Challenge, Unauthorized
+          
+          # Authorization rules (optional)
+          authorization:
+            assert_claims:
+              - name: "email"
+                anyOf:
+                  - "user@example.com"
+                  - "*@company.com"
+              - name: "groups"
+                allOf:
+                  - "admin"
+                  - "users"
+          
+          # Headers to forward to upstream services
+          headers:
+            - name: "X-Oidc-Email"
+              value: "{{ .claims.email }}"
+            - name: "X-Oidc-Subject"
+              value: "{{ .claims.sub }}"
+            - name: "X-Oidc-Name"
+              value: "{{ .claims.name }}"
+            - name: "X-Oidc-Groups"
+              value: "{{ .claims.groups | join \",\" }}"
+          
+          # Authorization header forwarding (optional)
+          authorization_header:
+            name: "Authorization"  # Header name to forward token
+          
+          # Authorization cookie forwarding (optional)
+          authorization_cookie:
+            name: "auth-token"  # Cookie name to forward token
+          
+          # Bypass authentication for certain requests
+          bypass_authentication_rule: ""  # CEL expression, e.g., "request.path.startsWith('/api/public')"
+          
+          # JavaScript/AJAX request detection
+          javascript_request_detection:
+            Headers:
+              # Headers that indicate a JavaScript/AJAX request
+              X-Requested-With:
+                - XMLHttpRequest
+              Sec-Fetch-Mode:
+                - cors
+                - same-origin
+              Content-Type:
+                - application/json
+              # Add custom headers as needed
+              # Custom-Header:
+              #   - custom-value
+          
+          # Metrics configuration
+          metrics:
+            enabled: false  # Enable metrics collection
+            prefix: "traefik_oidc_auth"  # Prometheus metric prefix
+            path: "/metrics"  # Path for metrics endpoint (standalone mode only)
+          
+          # Error page configuration
+          error_pages:
+            unauthenticated:
+              file_path: ""  # Path to custom HTML file
+              redirect_to: ""  # Redirect instead of showing error page
+            unauthorized:
+              file_path: ""  # Path to custom HTML file
+              redirect_to: ""  # Redirect instead of showing error page
+
+    # Example minimal configuration
+    oidc-auth-minimal:
+      plugin:
+        traefik-oidc-auth:
+          provider:
+            url: "https://accounts.google.com"
+            client_id: "your-google-client-id"
+            client_secret: "your-google-client-secret"
+          secret: "your-32-character-encryption-secret"
+
+    # Example Keycloak configuration
+    oidc-auth-keycloak:
+      plugin:
+        traefik-oidc-auth:
+          log_level: "INFO"
+          secret: "your-32-character-encryption-secret"
+          provider:
+            url: "https://keycloak.example.com/realms/myrealm"
+            client_id: "traefik-client"
+            client_secret: "client-secret-from-keycloak"
+            # Keycloak often includes audience in tokens
+            validate_audience: "true"
+          scopes:
+            - openid
+            - profile
+            - email
+            - roles
+          headers:
+            - name: "X-User-Id"
+              value: "{{ .claims.sub }}"
+            - name: "X-User-Email"
+              value: "{{ .claims.email }}"
+            - name: "X-User-Roles"
+              value: "{{ .claims.realm_access.roles | join \",\" }}"
+          authorization:
+            assert_claims:
+              - name: "realm_access.roles"
+                anyOf:
+                  - "app-user"
+                  - "app-admin"
+
+    # Example Azure AD configuration
+    oidc-auth-azure:
+      plugin:
+        traefik-oidc-auth:
+          log_level: "INFO"
+          secret: "your-32-character-encryption-secret"
+          provider:
+            url: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+            client_id: "your-azure-app-id"
+            client_secret: "your-azure-app-secret"
+            # Azure AD uses ID token for validation
+            verification_token: "IdToken"
+          scopes:
+            - openid
+            - profile
+            - email
+            - User.Read
+          headers:
+            - name: "X-User-Id"
+              value: "{{ .claims.oid }}"
+            - name: "X-User-Email"
+              value: "{{ .claims.email }}"
+            - name: "X-User-Name"
+              value: "{{ .claims.name }}"
+
+    # Example with public paths
+    oidc-auth-with-bypass:
+      plugin:
+        traefik-oidc-auth:
+          provider:
+            url: "https://auth.example.com"
+            client_id: "my-app"
+            client_secret: "my-secret"
+          secret: "your-32-character-encryption-secret"
+          # Allow public access to health checks and API docs
+          bypass_authentication_rule: |
+            request.path.startsWith('/health') || 
+            request.path.startsWith('/api/v1/public') ||
+            request.path == '/openapi.json'
+
+  # Example routers using the middleware
+  routers:
+    # Protected application
+    my-app:
+      entryPoints: ["websecure"]
+      rule: "Host(`app.example.com`)"
+      service: my-app-service
+      middlewares: ["oidc-auth@file"]
+      tls:
+        certResolver: letsencrypt
+
+    # Public health endpoint (bypassed by rule)
+    health:
+      entryPoints: ["websecure"]
+      rule: "Host(`app.example.com`) && PathPrefix(`/health`)"
+      service: my-app-service
+      middlewares: ["oidc-auth-with-bypass@file"]
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    my-app-service:
+      loadBalancer:
+        servers:
+          - url: "http://my-app:8080"

@@ -2,6 +2,7 @@ package src
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -14,12 +15,17 @@ import (
 	"text/template"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/sevensolutions/traefik-oidc-auth/src/errorPages"
 	"github.com/sevensolutions/traefik-oidc-auth/src/rules"
 
 	"github.com/sevensolutions/traefik-oidc-auth/src/logging"
+	"github.com/sevensolutions/traefik-oidc-auth/src/metrics"
 	"github.com/sevensolutions/traefik-oidc-auth/src/oidc"
 	"github.com/sevensolutions/traefik-oidc-auth/src/session"
+	"github.com/sevensolutions/traefik-oidc-auth/src/tracing"
 	"github.com/sevensolutions/traefik-oidc-auth/src/utils"
 )
 
@@ -35,11 +41,17 @@ type TraefikOidcAuth struct {
 	Jwks                     *oidc.JwksHandler
 	Lock                     sync.RWMutex
 	BypassAuthenticationRule *rules.RequestCondition
+	Metrics                  *metrics.MetricsCollector
+	Tracer                   *tracing.Tracer
 }
 
 // Make sure we fetch oidc discovery document during first request - avoid race condition
 // Perform lock when changing document - we are in concurrent environment
 func (toa *TraefikOidcAuth) EnsureOidcDiscovery() error {
+	return toa.EnsureOidcDiscoveryWithContext(context.Background())
+}
+
+func (toa *TraefikOidcAuth) EnsureOidcDiscoveryWithContext(ctx context.Context) error {
 	var config = toa.Config
 	var parsedURL = toa.ProviderURL
 	if toa.DiscoveryDocument == nil {
@@ -47,14 +59,33 @@ func (toa *TraefikOidcAuth) EnsureOidcDiscovery() error {
 		defer toa.Lock.Unlock()
 		// check again after lock
 		if toa.DiscoveryDocument == nil {
+			// Start discovery span
+			var span trace.Span
+			if toa.Tracer != nil {
+				ctx, span = toa.Tracer.StartSpan(ctx, tracing.SpanNameOIDCDiscovery)
+				defer span.End()
+				span.SetAttributes(tracing.AttrOIDCDiscoveryEndpoint.String(parsedURL.String() + "/.well-known/openid-configuration"))
+			}
+
 			var jwks = &oidc.JwksHandler{}
 			toa.Jwks = jwks
 			toa.logger.Log(logging.LevelInfo, "Getting OIDC discovery document...")
 
-			oidcDiscoveryDocument, err := GetOidcDiscovery(toa.logger, toa.httpClient, parsedURL)
+			oidcDiscoveryDocument, err := GetOidcDiscoveryWithContext(ctx, toa.logger, toa.httpClient, parsedURL, toa.Tracer)
 			if err != nil {
 				toa.logger.Log(logging.LevelError, "Error while retrieving discovery document: %s", err.Error())
+				if span != nil && span.IsRecording() {
+					tracing.RecordError(span, err, "Failed to fetch OIDC discovery document")
+				}
 				return err
+			}
+
+			if span != nil && span.IsRecording() {
+				span.SetAttributes(
+					tracing.AttrOIDCTokenEndpoint.String(oidcDiscoveryDocument.TokenEndpoint),
+					tracing.AttrOIDCJWKSEndpoint.String(oidcDiscoveryDocument.JWKSURI),
+					tracing.AttrOIDCUserInfoEndpoint.String(oidcDiscoveryDocument.UserinfoEndpoint),
+				)
 			}
 
 			// Apply defaults
@@ -104,9 +135,44 @@ func (toa *TraefikOidcAuth) isCallbackRequest(req *http.Request) bool {
 }
 
 func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	// Start metrics tracking
+	start := time.Now()
+	if toa.Metrics != nil {
+		toa.Metrics.RecordRequest()
+		defer toa.Metrics.RecordRequestLatency(start)
+	}
+
+	// Start tracing if enabled or trace headers present
+	var ctx context.Context
+	var span trace.Span
+	if toa.Tracer != nil && (toa.Tracer.IsEnabled() || tracing.HasTraceContext(req)) {
+		ctx, span = toa.Tracer.StartSpanFromRequest(req, tracing.SpanNameServeHTTP)
+		defer span.End()
+
+		// Add provider info
+		tracing.SetProviderInfo(span, toa.ProviderURL.String(), toa.Config.Provider.ClientId, toa.Config.Scopes)
+
+		// Add metrics status
+		if toa.Metrics != nil {
+			span.SetAttributes(tracing.AttrOIDCMetricsEnabled.Bool(true))
+		}
+
+		// Update request context
+		req = req.WithContext(ctx)
+	}
+
 	if toa.BypassAuthenticationRule != nil {
 		if toa.BypassAuthenticationRule.Match(toa.logger, req) {
 			toa.logger.Log(logging.LevelDebug, "BypassAuthenticationRule matched. Forwarding request without authentication.")
+
+			if toa.Metrics != nil {
+				toa.Metrics.RecordBypassedRequest()
+			}
+
+			if span != nil && span.IsRecording() {
+				span.SetAttributes(tracing.AttrOIDCBypassRule.String(toa.Config.BypassAuthenticationRule))
+				tracing.SetAuthResult(span, "bypassed", "Authentication bypassed by rule")
+			}
 
 			// Forward the request
 			toa.sanitizeForUpstream(req)
@@ -117,15 +183,24 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		}
 	}
 
-	err := toa.EnsureOidcDiscovery()
+	err := toa.EnsureOidcDiscoveryWithContext(req.Context())
 
 	if err != nil {
 		toa.logger.Log(logging.LevelError, "Error getting oidc discovery: %s", err.Error())
+		if span != nil && span.IsRecording() {
+			tracing.RecordError(span, err, "Failed to ensure OIDC discovery")
+			tracing.SetAuthResult(span, "error", "OIDC discovery failed")
+		}
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if toa.isCallbackRequest(req) {
+		if toa.Tracer != nil {
+			callbackCtx, callbackSpan := toa.Tracer.StartSpan(req.Context(), tracing.SpanNameHandleCallback)
+			req = req.WithContext(callbackCtx)
+			defer callbackSpan.End()
+		}
 		toa.handleCallback(rw, req)
 		return
 	}
@@ -135,11 +210,33 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 
+	// Start session validation span
+	var sessionSpan trace.Span
+	if toa.Tracer != nil {
+		var sessionCtx context.Context
+		sessionCtx, sessionSpan = toa.Tracer.StartSpan(req.Context(), tracing.SpanNameSessionValidation)
+		req = req.WithContext(sessionCtx)
+		defer sessionSpan.End()
+	}
+
 	session, updateSession, claims, err := toa.getSessionForRequest(req)
 
 	if err == nil && session != nil {
+		if sessionSpan != nil && sessionSpan.IsRecording() {
+			sessionSpan.SetAttributes(tracing.AttrOIDCSessionID.String(session.Id))
+			if toa.Config.Tracing.DetailedSpans && claims != nil {
+				if sub, ok := claims["sub"].(string); ok {
+					tracing.SetUserInfo(sessionSpan, sub, claims["email"].(string))
+				}
+			}
+		}
 		// Handle logout
 		if strings.HasPrefix(req.RequestURI, toa.Config.LogoutUri) {
+			if toa.Tracer != nil {
+				logoutCtx, logoutSpan := toa.Tracer.StartSpan(req.Context(), tracing.SpanNameHandleLogout)
+				req = req.WithContext(logoutCtx)
+				defer logoutSpan.End()
+			}
 			toa.handleLogout(rw, req, session)
 			return
 		}
@@ -147,11 +244,31 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		// If this request is using external authentication by using a header or custom cookie,
 		// we need to validate the authorization on every request.
 		if session.Id == "AuthorizationHeader" || session.Id == "AuthorizationCookie" {
-			session.IsAuthorized = isAuthorized(toa.logger, toa.Config.Authorization, claims)
+			if toa.Tracer != nil {
+				_, authSpan := toa.Tracer.StartSpan(req.Context(), tracing.SpanNameAuthorizationCheck)
+				defer authSpan.End()
+
+				session.IsAuthorized = isAuthorized(toa.logger, toa.Config.Authorization, claims)
+
+				if authSpan.IsRecording() {
+					authSpan.SetAttributes(
+						tracing.AttrOIDCTokenType.String(session.Id),
+						attribute.Bool("authorized", session.IsAuthorized),
+					)
+				}
+			} else {
+				session.IsAuthorized = isAuthorized(toa.logger, toa.Config.Authorization, claims)
+			}
 		}
 
 		// Ensure the session is authorized
 		if !session.IsAuthorized {
+			if toa.Metrics != nil {
+				toa.Metrics.RecordUnauthorizedRequest()
+			}
+			if span != nil && span.IsRecording() {
+				tracing.SetAuthResult(span, "unauthorized", "User not authorized to access resource")
+			}
 			toa.handleUnauthorized(rw, req)
 			return
 		}
@@ -160,15 +277,27 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		err = toa.attachHeaders(req, session, claims)
 		if err != nil {
 			toa.logger.Log(logging.LevelError, "Error while attaching headers: %s", err.Error())
+			if toa.Metrics != nil {
+				toa.Metrics.RecordError("internal")
+			}
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		if updateSession {
+			if toa.Metrics != nil {
+				toa.Metrics.RecordSessionRefresh()
+			}
 			toa.storeSessionAndAttachCookie(session, rw)
 		}
 
 		// Forward the request
+		if toa.Metrics != nil {
+			toa.Metrics.RecordAuthenticatedRequest()
+		}
+		if span != nil && span.IsRecording() {
+			tracing.SetAuthResult(span, "authenticated", "User authenticated successfully")
+		}
 		toa.sanitizeForUpstream(req)
 		toa.next.ServeHTTP(rw, req)
 		return
@@ -179,6 +308,12 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 	// Clear the session cookie
 	clearChunkedCookie(toa.Config, rw, req, getSessionCookieName(toa.Config))
 
+	if toa.Metrics != nil {
+		toa.Metrics.RecordUnauthenticatedRequest()
+	}
+	if span != nil && span.IsRecording() {
+		tracing.SetAuthResult(span, "unauthenticated", "No valid session found")
+	}
 	toa.handleUnauthenticated(rw, req)
 }
 
@@ -290,9 +425,9 @@ func (toa *TraefikOidcAuth) handleCallback(rw http.ResponseWriter, req *http.Req
 		var claims map[string]interface{}
 
 		if toa.Config.Provider.TokenValidation == "Introspection" {
-			_, claims, err = toa.introspectToken(usedToken)
+			_, claims, err = toa.introspectTokenWithContext(req.Context(), usedToken)
 		} else {
-			_, claims, err = toa.validateTokenLocally(usedToken)
+			_, claims, err = toa.validateTokenLocallyWithContext(req.Context(), usedToken)
 		}
 
 		if err != nil {
@@ -353,6 +488,11 @@ func (toa *TraefikOidcAuth) handleCallback(rw http.ResponseWriter, req *http.Req
 func (toa *TraefikOidcAuth) handleLogout(rw http.ResponseWriter, req *http.Request, session *session.SessionState) {
 	toa.logger.Log(logging.LevelInfo, "Logging out...")
 
+	if toa.Metrics != nil {
+		toa.Metrics.RecordLogout()
+		toa.Metrics.RecordSessionDestroyed()
+	}
+
 	// https://openid.net/specs/openid-connect-rpinitiated-1_0.html
 
 	endSessionURL, err := url.Parse(toa.DiscoveryDocument.EndSessionEndpoint)
@@ -406,6 +546,27 @@ func (toa *TraefikOidcAuth) handleLogout(rw http.ResponseWriter, req *http.Reque
 }
 
 func (toa *TraefikOidcAuth) handleUnauthenticated(rw http.ResponseWriter, req *http.Request) {
+	// For XHR requests, always return JSON error instead of redirecting
+	var jsHeaders map[string][]string
+	if toa.Config.JavaScriptRequestDetection != nil {
+		jsHeaders = toa.Config.JavaScriptRequestDetection.Headers
+	}
+
+	if utils.IsXHRRequestWithHeaders(req, jsHeaders) {
+		data := make(map[string]interface{})
+		data["statusType"] = "https://tools.ietf.org/html/rfc9110#section-15.5.2"
+		data["statusCode"] = http.StatusUnauthorized
+		data["statusName"] = "Unauthorized"
+		data["description"] = "Session expired or not authenticated"
+
+		// Add login and logout URLs for XHR requests
+		data["loginUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri)
+		data["logoutUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
+
+		errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthenticated, rw, req, data, jsHeaders)
+		return
+	}
+
 	if toa.Config.UnauthorizedBehavior == "Challenge" {
 		toa.redirectToProvider(rw, req)
 	} else {
@@ -419,9 +580,17 @@ func (toa *TraefikOidcAuth) handleUnauthenticated(rw http.ResponseWriter, req *h
 		if toa.Config.LoginUri != "" {
 			data["primaryButtonText"] = "Login"
 			data["primaryButtonUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri)
+			data["loginUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri)
+		}
+		if toa.Config.LogoutUri != "" {
+			data["logoutUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
 		}
 
-		errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthenticated, rw, req, data)
+		var jsHeaders map[string][]string
+		if toa.Config.JavaScriptRequestDetection != nil {
+			jsHeaders = toa.Config.JavaScriptRequestDetection.Headers
+		}
+		errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthenticated, rw, req, data, jsHeaders)
 	}
 }
 
@@ -436,12 +605,18 @@ func (toa *TraefikOidcAuth) handleUnauthorized(rw http.ResponseWriter, req *http
 	if toa.Config.LoginUri != "" {
 		data["primaryButtonText"] = "Login with a different account"
 		data["primaryButtonUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri) + "?prompt=login"
+		data["loginUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri) + "?prompt=login"
 	}
 
 	data["secondaryButtonText"] = "Logout"
 	data["secondaryButtonUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
+	data["logoutUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
 
-	errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthorized, rw, req, data)
+	var jsHeaders map[string][]string
+	if toa.Config.JavaScriptRequestDetection != nil {
+		jsHeaders = toa.Config.JavaScriptRequestDetection.Headers
+	}
+	errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthorized, rw, req, data, jsHeaders)
 }
 
 func (toa *TraefikOidcAuth) redirectToProvider(rw http.ResponseWriter, req *http.Request) {

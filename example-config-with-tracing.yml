@@ -1,0 +1,60 @@
+# Example configuration with OpenTelemetry tracing enabled
+
+# Provider configuration
+provider:
+  url: "https://keycloak.example.com/realms/myrealm"
+  client_id: "my-client"
+  client_secret: "my-secret"
+  scopes:
+    - openid
+    - profile
+    - email
+
+# Authentication settings
+secret: "my-32-character-secret-key-here!"
+callback_uri: "/oauth2/callback"
+login_uri: "/oauth2/login"
+logout_uri: "/oauth2/logout"
+
+# JavaScript request detection configuration
+javascript_request_detection:
+  enabled: true
+  headers:
+    x-requested-with:
+      - xmlhttprequest
+    sec-fetch-mode:
+      - cors
+      - no-cors
+      - same-origin
+    content-type:
+      - application/json
+      - application/x-www-form-urlencoded
+    accept:
+      - application/json
+
+# Metrics configuration
+metrics:
+  enabled: true
+  path: "/metrics"
+  prefix: "oidc_auth_"
+
+# OpenTelemetry tracing configuration
+tracing:
+  enabled: "auto"  # Can be "true", "false", or "auto" (enables when trace headers are present)
+  service_name: "traefik-oidc-auth"
+  sample_rate: 1.0  # Sample 100% of traces
+  otlp_endpoint: "localhost:4318"  # OTLP HTTP endpoint (without http:// prefix)
+  otlp_headers:
+    authorization: "Bearer my-token"  # Optional authentication headers
+  detailed_spans: true  # Include detailed user and claim information in spans
+
+# Session cookie settings
+session_cookie:
+  secure: true
+  http_only: true
+  same_site: "lax"
+  max_age: 86400  # 24 hours
+
+# Authorization rules (optional)
+authorization:
+  claim_assertion: "email.endsWith('@example.com')"

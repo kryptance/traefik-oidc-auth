@@ -1,3 +1,85 @@
-**/.env
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Build directories
+dist/
+build/
+bin/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
 **/.DS_Store
-.idea
+
+# Environment files
+.env
+**/.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Test artifacts
+e2e/test-results/
+e2e/playwright-report/
+e2e/tests/standalone/test-tracing/
+test-reports/
+security-report.json
+
+# Node modules (for e2e tests)
+node_modules/
+package-lock.json
+
+# Docker volumes
+.docker/
+
+# Local configuration
+local-config.yml
+local-config.json
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.p12
+
+# Traefik plugin development
+plugins-local/
+.traefik/
+
+# Standalone binary
+standalone
+traefik-oidc-auth
+
+# Example outputs
+example-output/
+
+# Metrics and traces
+metrics.json
+traces.json
+*.otlp
