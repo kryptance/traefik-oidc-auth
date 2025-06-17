@@ -161,6 +161,19 @@ func (toa *TraefikOidcAuth) validateToken(session *session.SessionState) (bool, 
 		}
 	}
 
+	// Skip validation if disabled
+	if toa.Config.Provider.DisableTokenValidationBool {
+		toa.logger.Log(logging.LevelDebug, "Token validation is disabled, extracting claims without validation")
+		// Parse token without validation to extract claims
+		claims, err := toa.parseTokenWithoutValidation(token)
+		if err != nil {
+			toa.logger.Log(logging.LevelWarn, "Failed to parse token claims without validation: %v", err)
+			// Return empty claims on parse error
+			return true, make(map[string]interface{}), nil
+		}
+		return true, claims, nil
+	}
+
 	if toa.Config.Provider.TokenValidation == "Introspection" {
 		return toa.introspectToken(token)
 	}

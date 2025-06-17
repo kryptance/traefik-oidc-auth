@@ -406,6 +406,27 @@ func (toa *TraefikOidcAuth) handleLogout(rw http.ResponseWriter, req *http.Reque
 }
 
 func (toa *TraefikOidcAuth) handleUnauthenticated(rw http.ResponseWriter, req *http.Request) {
+	// For XHR requests, always return JSON error instead of redirecting
+	var jsHeaders map[string][]string
+	if toa.Config.JavaScriptRequestDetection != nil {
+		jsHeaders = toa.Config.JavaScriptRequestDetection.Headers
+	}
+
+	if utils.IsXHRRequestWithHeaders(req, jsHeaders) {
+		data := make(map[string]interface{})
+		data["statusType"] = "https://tools.ietf.org/html/rfc9110#section-15.5.2"
+		data["statusCode"] = http.StatusUnauthorized
+		data["statusName"] = "Unauthorized"
+		data["description"] = "Session expired or not authenticated"
+
+		// Add login and logout URLs for XHR requests
+		data["loginUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri)
+		data["logoutUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
+
+		errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthenticated, rw, req, data, jsHeaders)
+		return
+	}
+
 	if toa.Config.UnauthorizedBehavior == "Challenge" {
 		toa.redirectToProvider(rw, req)
 	} else {
@@ -419,9 +440,17 @@ func (toa *TraefikOidcAuth) handleUnauthenticated(rw http.ResponseWriter, req *h
 		if toa.Config.LoginUri != "" {
 			data["primaryButtonText"] = "Login"
 			data["primaryButtonUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri)
+			data["loginUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri)
+		}
+		if toa.Config.LogoutUri != "" {
+			data["logoutUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
 		}
 
-		errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthenticated, rw, req, data)
+		var jsHeaders map[string][]string
+		if toa.Config.JavaScriptRequestDetection != nil {
+			jsHeaders = toa.Config.JavaScriptRequestDetection.Headers
+		}
+		errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthenticated, rw, req, data, jsHeaders)
 	}
 }
 
@@ -436,12 +465,18 @@ func (toa *TraefikOidcAuth) handleUnauthorized(rw http.ResponseWriter, req *http
 	if toa.Config.LoginUri != "" {
 		data["primaryButtonText"] = "Login with a different account"
 		data["primaryButtonUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri) + "?prompt=login"
+		data["loginUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LoginUri) + "?prompt=login"
 	}
 
 	data["secondaryButtonText"] = "Logout"
 	data["secondaryButtonUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
+	data["logoutUrl"] = utils.EnsureAbsoluteUrl(req, toa.Config.LogoutUri)
 
-	errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthorized, rw, req, data)
+	var jsHeaders map[string][]string
+	if toa.Config.JavaScriptRequestDetection != nil {
+		jsHeaders = toa.Config.JavaScriptRequestDetection.Headers
+	}
+	errorPages.WriteError(toa.logger, toa.Config.ErrorPages.Unauthorized, rw, req, data, jsHeaders)
 }
 
 func (toa *TraefikOidcAuth) redirectToProvider(rw http.ResponseWriter, req *http.Request) {

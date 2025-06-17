@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.insecure=true"
+      - "--providers.file.filename=/etc/traefik/traefik-config.yml"
+      - "--log.level=DEBUG"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      # Mount the plugin source code
+      - ".:/plugins-local/src/github.com/sevensolutions/traefik-oidc-auth:ro"
+      # Mount your Traefik configuration
+      - "./example-traefik-config.yml:/etc/traefik/traefik-config.yml:ro"

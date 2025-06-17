@@ -167,6 +167,19 @@ func (toa *TraefikOidcAuth) validateTokenLocally(tokenString string) (bool, map[
 	return true, claims, nil
 }
 
+func (toa *TraefikOidcAuth) parseTokenWithoutValidation(tokenString string) (map[string]interface{}, error) {
+	// Parse token without validation to extract claims
+	claims := jwt.MapClaims{}
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	
+	_, _, err := parser.ParseUnverified(tokenString, claims)
+	if err != nil {
+		return nil, err
+	}
+	
+	return claims, nil
+}
+
 func (toa *TraefikOidcAuth) introspectToken(token string) (bool, map[string]interface{}, error) {
 	data := url.Values{
 		"token": {token},

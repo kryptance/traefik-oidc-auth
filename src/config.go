@@ -22,41 +22,44 @@ import (
 const DefaultSecret = "MLFs4TT99kOOq8h3UAVRtYoCTDYXiRcZ"
 
 type Config struct {
-	LogLevel string `json:"log_level"`
+	LogLevel string `json:"log_level" default:"warn"`
 
-	Secret string `json:"secret"`
+	Secret string `json:"secret" default:"MLFs4TT99kOOq8h3UAVRtYoCTDYXiRcZ"`
 
 	Provider *ProviderConfig `json:"provider"`
-	Scopes   []string        `json:"scopes"`
+	Scopes   []string        `json:"scopes" default:"[\"openid\", \"profile\", \"email\"]"`
 
 	// Can be a relative path or a full URL.
 	// If a relative path is used, the scheme and domain will be taken from the incoming request.
 	// In this case, the callback path will overlay all hostnames behind the middleware.
 	// If a full URL is used, all callbacks are sent there.  It is the user's responsibility to ensure
 	// that the callback URL is also routed to this middleware plugin.
-	CallbackUri string `json:"callback_uri"`
+	CallbackUri string `json:"callback_uri" default:"/oidc/callback"`
 
 	// The URL used to start authorization when needed.
 	// All other requests that are not already authorized will return a 401 Unauthorized.
 	// When left empty, all requests can start authorization.
-	LoginUri                    string   `json:"login_uri"`
-	PostLoginRedirectUri        string   `json:"post_login_redirect_uri"`
-	ValidPostLoginRedirectUris  []string `json:"valid_post_login_redirect_uris"`
-	LogoutUri                   string   `json:"logout_uri"`
-	PostLogoutRedirectUri       string   `json:"post_logout_redirect_uri"`
-	ValidPostLogoutRedirectUris []string `json:"valid_post_logout_redirect_uris"`
+	LoginUri                    string   `json:"login_uri" default:"/oidc/login"`
+	PostLoginRedirectUri        string   `json:"post_login_redirect_uri" default:"/"`
+	ValidPostLoginRedirectUris  []string `json:"valid_post_login_redirect_uris" default:"[\"/\"]"`
+	LogoutUri                   string   `json:"logout_uri" default:"/logout"`
+	PostLogoutRedirectUri       string   `json:"post_logout_redirect_uri" default:"/"`
+	ValidPostLogoutRedirectUris []string `json:"valid_post_logout_redirect_uris" default:"[\"/\"]"`
 
-	CookieNamePrefix     string                     `json:"cookie_name_prefix"`
+	CookieNamePrefix     string                     `json:"cookie_name_prefix" default:"TraefikOidcAuth"`
 	SessionCookie        *SessionCookieConfig       `json:"session_cookie"`
 	AuthorizationHeader  *AuthorizationHeaderConfig `json:"authorization_header"`
 	AuthorizationCookie  *AuthorizationCookieConfig `json:"authorization_cookie"`
-	UnauthorizedBehavior string                     `json:"unauthorized_behavior"`
+	UnauthorizedBehavior string                     `json:"unauthorized_behavior" default:"Challenge"`
 
 	Authorization *AuthorizationConfig `json:"authorization"`
 
 	Headers []HeaderConfig `json:"headers"`
 
 	BypassAuthenticationRule string `json:"bypass_authentication_rule"`
+
+	// JavaScriptRequestDetection allows configuring how to detect JavaScript/AJAX requests
+	JavaScriptRequestDetection *JavaScriptRequestDetectionConfig `json:"javascript_request_detection"`
 
 	ErrorPages *errorPages.ErrorPagesConfig `json:"error_pages"`
 }
@@ -65,7 +68,7 @@ type ProviderConfig struct {
 	Url string `json:"url"`
 
 	InsecureSkipVerify     string `json:"insecure_skip_verify"`
-	InsecureSkipVerifyBool bool   `json:"insecure_skip_verify_bool"`
+	InsecureSkipVerifyBool bool   `json:"insecure_skip_verify_bool" default:"false"`
 
 	CABundle     string `json:"ca_bundle"`
 	CABundleFile string `json:"ca_bundle_file"`
@@ -74,27 +77,30 @@ type ProviderConfig struct {
 	ClientSecret string `json:"client_secret"`
 
 	UsePkce     string `json:"use_pkce"`
-	UsePkceBool bool   `json:"use_pkce_bool"`
+	UsePkceBool bool   `json:"use_pkce_bool" default:"false"`
 
 	ValidateAudience     string `json:"validate_audience"`
-	ValidateAudienceBool bool   `json:"validate_audience_bool"`
+	ValidateAudienceBool bool   `json:"validate_audience_bool" default:"true"`
 	ValidAudience        string `json:"valid_audience"`
 
 	ValidateIssuer     string `json:"validate_issuer"`
-	ValidateIssuerBool bool   `json:"validate_issuer_bool"`
+	ValidateIssuerBool bool   `json:"validate_issuer_bool" default:"true"`
 	ValidIssuer        string `json:"valid_issuer"`
 
 	// AccessToken or IdToken or Introspection
 	TokenValidation string `json:"verification_token"`
+
+	DisableTokenValidation     string `json:"disable_token_validation"`
+	DisableTokenValidationBool bool   `json:"disable_token_validation_bool"`
 }
 
 type SessionCookieConfig struct {
-	Path     string `json:"path"`
-	Domain   string `json:"domain"`
-	Secure   bool   `json:"secure"`
-	HttpOnly bool   `json:"http_only"`
-	SameSite string `json:"same_site"`
-	MaxAge   int    `json:"max_age"`
+	Path     string `json:"path" default:"/"`
+	Domain   string `json:"domain" default:""`
+	Secure   bool   `json:"secure" default:"true"`
+	HttpOnly bool   `json:"http_only" default:"true"`
+	SameSite string `json:"same_site" default:"default"`
+	MaxAge   int    `json:"max_age" default:"0"`
 }
 
 type AuthorizationHeaderConfig struct {
@@ -122,24 +128,30 @@ type HeaderConfig struct {
 	template *template.Template
 }
 
+type JavaScriptRequestDetectionConfig struct {
+	// Headers to check for JavaScript/AJAX request detection
+	// Each header can have a list of values to match against
+	Headers map[string][]string `json:"headers" default:"{\"X-Requested-With\":[\"XMLHttpRequest\"],\"Sec-Fetch-Mode\":[\"cors\",\"same-origin\"],\"Content-Type\":[\"application/json\"]}"`
+}
+
 // Will be called by traefik
 func CreateConfig() *Config {
 	return &Config{
 		LogLevel: logging.LevelWarn,
 		Secret:   DefaultSecret,
 		Provider: &ProviderConfig{
-			UsePkceBool:            false,
 			InsecureSkipVerifyBool: false,
-			ValidateIssuerBool:     true,
-			ValidateAudienceBool:   true,
+			UsePkceBool:           false,
+			ValidateAudienceBool:  true,
+			ValidateIssuerBool:    true,
 		},
-		// Note: It looks like we're not allowed to specify a default value for arrays here.
-		// Maybe a traefik bug. So I've moved this to the New() method.
-		//Scopes:                []string{"openid", "profile", "email"},
 		CallbackUri:           "/oidc/callback",
-		LogoutUri:             "/logout",
+		LoginUri:              "/oidc/login",
+		PostLoginRedirectUri:  "/",
+		LogoutUri:            "/logout",
 		PostLogoutRedirectUri: "/",
 		CookieNamePrefix:      "TraefikOidcAuth",
+		UnauthorizedBehavior:  "Challenge",
 		SessionCookie: &SessionCookieConfig{
 			Path:     "/",
 			Domain:   "",
@@ -148,10 +160,16 @@ func CreateConfig() *Config {
 			SameSite: "default",
 			MaxAge:   0,
 		},
-		AuthorizationHeader:  &AuthorizationHeaderConfig{},
-		AuthorizationCookie:  &AuthorizationCookieConfig{},
-		UnauthorizedBehavior: "Challenge",
-		Authorization:        &AuthorizationConfig{},
+		AuthorizationHeader: &AuthorizationHeaderConfig{},
+		AuthorizationCookie: &AuthorizationCookieConfig{},
+		Authorization:       &AuthorizationConfig{},
+		JavaScriptRequestDetection: &JavaScriptRequestDetectionConfig{
+			Headers: map[string][]string{
+				"X-Requested-With": {"XMLHttpRequest"},
+				"Sec-Fetch-Mode":   {"cors", "same-origin"},
+				"Content-Type":     {"application/json"},
+			},
+		},
 		ErrorPages: &errorPages.ErrorPagesConfig{
 			Unauthenticated: &errorPages.ErrorPageConfig{},
 			Unauthorized:    &errorPages.ErrorPageConfig{},
@@ -214,6 +232,10 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 	config.Provider.CABundle = utils.ExpandEnvironmentVariableString(config.Provider.CABundle)
 	config.Provider.CABundleFile = utils.ExpandEnvironmentVariableString(config.Provider.CABundleFile)
 	config.Provider.TokenValidation = utils.ExpandEnvironmentVariableString(config.Provider.TokenValidation)
+	config.Provider.DisableTokenValidationBool, err = utils.ExpandEnvironmentVariableBoolean(config.Provider.DisableTokenValidation, config.Provider.DisableTokenValidationBool)
+	if err != nil {
+		return nil, err
+	}
 
 	config.ErrorPages.Unauthenticated.FilePath = utils.ExpandEnvironmentVariableString(config.ErrorPages.Unauthenticated.FilePath)
 	config.ErrorPages.Unauthenticated.RedirectTo = utils.ExpandEnvironmentVariableString(config.ErrorPages.Unauthenticated.RedirectTo)
