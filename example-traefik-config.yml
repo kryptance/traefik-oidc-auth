@@ -136,7 +136,7 @@ http:
             enabled: false  # Enable metrics collection
             prefix: "traefik_oidc_auth"  # Prometheus metric prefix
             path: "/metrics"  # Path for metrics endpoint (standalone mode only)
-          
+
           # Error page configuration
           error_pages:
             unauthenticated:
