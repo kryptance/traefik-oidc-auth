@@ -47,13 +47,13 @@ USER oidc
 EXPOSE 8080 9090
 
 # Set default environment variables
-ENV CONFIG_FILE=/config/config.json \
-    LISTEN_ADDR=:8080 \
-    METRICS_ADDR=:9090 \
-    UPSTREAM_URL=http://localhost:8081
+ENV TRAEFIK_AUTH_CONFIG_FILE=/config/config.json \
+    TRAEFIK_AUTH_LISTEN_ADDR=:8080 \
+    TRAEFIK_AUTH_METRICS_ADDR=:9090 \
+    TRAEFIK_AUTH_UPSTREAM_URL=http://localhost:8081
 
 # Entry point
 ENTRYPOINT ["/usr/local/bin/traefik-oidc-auth"]
 
-# Default command
-CMD sh -c "env && echo ARGS: \"$@\" && /usr/local/bin/traefik-oidc-auth -config \"$CONFIG_FILE\" -addr \"$LISTEN_ADDR\" -metrics-addr \"$METRICS_ADDR\" -upstream \"$UPSTREAM_URL\""
+# Default command (no arguments needed as we use environment variables)
+CMD ["/usr/local/bin/traefik-oidc-auth"]

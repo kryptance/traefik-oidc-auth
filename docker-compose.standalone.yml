@@ -11,10 +11,10 @@ services:
       - "8080:8080"  # Main proxy port
       - "9090:9090"  # Metrics port
     environment:
-      - CONFIG_FILE=/config/config.json
-      - LISTEN_ADDR=:8080
-      - METRICS_ADDR=:9090
-      - UPSTREAM_URL=http://whoami:80
+      - TRAEFIK_AUTH_CONFIG_FILE=/config/config.json
+      - TRAEFIK_AUTH_LISTEN_ADDR=:8080
+      - TRAEFIK_AUTH_METRICS_ADDR=:9090
+      - TRAEFIK_AUTH_UPSTREAM_URL=http://whoami:80
     volumes:
       - ./config.json:/config/config.json:ro
     depends_on:

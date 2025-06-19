@@ -62,9 +62,6 @@ type Config struct {
 	// JavaScriptRequestDetection allows configuring how to detect JavaScript/AJAX requests
 	JavaScriptRequestDetection *JavaScriptRequestDetectionConfig `json:"javascript_request_detection"`
 
-	// JavaScriptRequestDetection allows configuring how to detect JavaScript/AJAX requests
-	JavaScriptRequestDetection *JavaScriptRequestDetectionConfig `json:"javascript_request_detection"`
-
 	// Metrics configuration
 	Metrics *MetricsConfig `json:"metrics"`
 
@@ -144,12 +141,6 @@ type JavaScriptRequestDetectionConfig struct {
 	Headers map[string][]string `json:"headers" default:"{\"X-Requested-With\":[\"XMLHttpRequest\"],\"Sec-Fetch-Mode\":[\"cors\",\"same-origin\"],\"Content-Type\":[\"application/json\"]}"`
 }
 
-type JavaScriptRequestDetectionConfig struct {
-	// Headers to check for JavaScript/AJAX request detection
-	// Each header can have a list of values to match against
-	Headers map[string][]string `json:"headers" default:"{\"X-Requested-With\":[\"XMLHttpRequest\"],\"Sec-Fetch-Mode\":[\"cors\",\"same-origin\"],\"Content-Type\":[\"application/json\"]}"`
-}
-
 type MetricsConfig struct {
 	// Enable metrics collection
 	Enabled bool `json:"enabled" default:"false"`
@@ -189,7 +180,7 @@ func CreateConfig() *Config {
 		CallbackUri:           "/oidc/callback",
 		LoginUri:              "/oidc/login",
 		PostLoginRedirectUri:  "/",
-		LogoutUri:            "/logout",
+		LogoutUri:             "/logout",
 		PostLogoutRedirectUri: "/",
 		CookieNamePrefix:      "TraefikOidcAuth",
 		UnauthorizedBehavior:  "Challenge",
