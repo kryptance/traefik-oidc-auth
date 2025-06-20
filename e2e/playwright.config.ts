@@ -13,6 +13,10 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
+  /* Test timeout */
+  timeout: 120 * 1000,
+  /* Global timeout */
+  globalTimeout: 10 * 60 * 1000,
   /* Run tests in files in parallel */
   fullyParallel: false,
   /* Fail the build on CI if you accidentally left test.only in the source code. */

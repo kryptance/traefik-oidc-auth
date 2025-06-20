@@ -11,14 +11,23 @@ services:
       - "8080:8080"  # Main proxy port
       - "9090:9090"  # Metrics port
     environment:
+      # Standalone configuration
       - TRAEFIK_AUTH_CONFIG_FILE=/config/config.json
       - TRAEFIK_AUTH_LISTEN_ADDR=:8080
       - TRAEFIK_AUTH_METRICS_ADDR=:9090
       - TRAEFIK_AUTH_UPSTREAM_URL=http://whoami:80
-    volumes:
-      - ./config.json:/config/config.json:ro
+      # OIDC configuration
+      - LOG_LEVEL=debug
+      - OIDC_SECRET=12345678901234567890123456789012  # 32 characters
+      - OIDC_PROVIDER_URL=http://keycloak:8080/realms/master
+      - OIDC_CLIENT_ID=traefik-oidc-auth
+      - OIDC_CLIENT_SECRET=test-client-secret
+      - OIDC_CALLBACK_URI=/oauth2/callback
+      - OIDC_USE_PKCE=true
+      - OIDC_INSECURE_SKIP_VERIFY=true  # For local development only
     depends_on:
       - whoami
+      - keycloak
     networks:
       - oidc-network
 
@@ -29,13 +38,15 @@ services:
     networks:
       - oidc-network
 
-  # Optional: Keycloak for testing
+  # Keycloak for OIDC provider
   keycloak:
     image: quay.io/keycloak/keycloak:26.2.5
     container_name: keycloak
     environment:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
     command:
       - start-dev
     ports:
