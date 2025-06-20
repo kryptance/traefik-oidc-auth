@@ -15,9 +15,6 @@ import (
 	"text/template"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
-
 	"github.com/sevensolutions/traefik-oidc-auth/src/errorPages"
 	"github.com/sevensolutions/traefik-oidc-auth/src/rules"
 
@@ -42,7 +39,7 @@ type TraefikOidcAuth struct {
 	Lock                     sync.RWMutex
 	BypassAuthenticationRule *rules.RequestCondition
 	Metrics                  *metrics.MetricsCollector
-	Tracer                   *tracing.Tracer
+	Tracer                   tracing.Tracer
 }
 
 // Make sure we fetch oidc discovery document during first request - avoid race condition
@@ -60,11 +57,11 @@ func (toa *TraefikOidcAuth) EnsureOidcDiscoveryWithContext(ctx context.Context) 
 		// check again after lock
 		if toa.DiscoveryDocument == nil {
 			// Start discovery span
-			var span trace.Span
+			var span tracing.Span
 			if toa.Tracer != nil {
 				ctx, span = toa.Tracer.StartSpan(ctx, tracing.SpanNameOIDCDiscovery)
 				defer span.End()
-				span.SetAttributes(tracing.AttrOIDCDiscoveryEndpoint.String(parsedURL.String() + "/.well-known/openid-configuration"))
+				span.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCDiscoveryEndpoint, parsedURL.String() + "/.well-known/openid-configuration"))
 			}
 
 			var jwks = &oidc.JwksHandler{}
@@ -82,9 +79,9 @@ func (toa *TraefikOidcAuth) EnsureOidcDiscoveryWithContext(ctx context.Context) 
 
 			if span != nil && span.IsRecording() {
 				span.SetAttributes(
-					tracing.AttrOIDCTokenEndpoint.String(oidcDiscoveryDocument.TokenEndpoint),
-					tracing.AttrOIDCJWKSEndpoint.String(oidcDiscoveryDocument.JWKSURI),
-					tracing.AttrOIDCUserInfoEndpoint.String(oidcDiscoveryDocument.UserinfoEndpoint),
+					tracing.StringAttribute(tracing.AttrOIDCTokenEndpoint, oidcDiscoveryDocument.TokenEndpoint),
+					tracing.StringAttribute(tracing.AttrOIDCJWKSEndpoint, oidcDiscoveryDocument.JWKSURI),
+					tracing.StringAttribute(tracing.AttrOIDCUserInfoEndpoint, oidcDiscoveryDocument.UserinfoEndpoint),
 				)
 			}
 
@@ -144,7 +141,7 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 
 	// Start tracing if enabled or trace headers present
 	var ctx context.Context
-	var span trace.Span
+	var span tracing.Span
 	if toa.Tracer != nil && (toa.Tracer.IsEnabled() || tracing.HasTraceContext(req)) {
 		ctx, span = toa.Tracer.StartSpanFromRequest(req, tracing.SpanNameServeHTTP)
 		defer span.End()
@@ -154,7 +151,7 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 
 		// Add metrics status
 		if toa.Metrics != nil {
-			span.SetAttributes(tracing.AttrOIDCMetricsEnabled.Bool(true))
+			span.SetAttributes(tracing.BoolAttribute(tracing.AttrOIDCMetricsEnabled, true))
 		}
 
 		// Update request context
@@ -170,7 +167,7 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 			}
 
 			if span != nil && span.IsRecording() {
-				span.SetAttributes(tracing.AttrOIDCBypassRule.String(toa.Config.BypassAuthenticationRule))
+				span.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCBypassRule, toa.Config.BypassAuthenticationRule))
 				tracing.SetAuthResult(span, "bypassed", "Authentication bypassed by rule")
 			}
 
@@ -211,7 +208,7 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 	}
 
 	// Start session validation span
-	var sessionSpan trace.Span
+	var sessionSpan tracing.Span
 	if toa.Tracer != nil {
 		var sessionCtx context.Context
 		sessionCtx, sessionSpan = toa.Tracer.StartSpan(req.Context(), tracing.SpanNameSessionValidation)
@@ -223,10 +220,12 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 
 	if err == nil && session != nil {
 		if sessionSpan != nil && sessionSpan.IsRecording() {
-			sessionSpan.SetAttributes(tracing.AttrOIDCSessionID.String(session.Id))
-			if toa.Config.Tracing.DetailedSpans && claims != nil {
+			sessionSpan.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCSessionID, session.Id))
+			if toa.Config.Tracing != nil && toa.Config.Tracing.DetailedSpans && claims != nil {
 				if sub, ok := claims["sub"].(string); ok {
-					tracing.SetUserInfo(sessionSpan, sub, claims["email"].(string))
+					if email, ok := claims["email"].(string); ok {
+						tracing.SetUserInfo(sessionSpan, sub, email)
+					}
 				}
 			}
 		}
@@ -252,8 +251,8 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 
 				if authSpan.IsRecording() {
 					authSpan.SetAttributes(
-						tracing.AttrOIDCTokenType.String(session.Id),
-						attribute.Bool("authorized", session.IsAuthorized),
+						tracing.StringAttribute(tracing.AttrOIDCTokenType, session.Id),
+						tracing.BoolAttribute("authorized", session.IsAuthorized),
 					)
 				}
 			} else {

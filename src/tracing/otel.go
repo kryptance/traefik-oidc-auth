@@ -1,3 +1,6 @@
+//go:build !yaegi && tracing
+// +build !yaegi,tracing
+
 package tracing
 
 import (
@@ -14,40 +17,7 @@ import (
 
 const (
 	// TracerName is the name of the tracer
-	TracerName = "github.com/sevensolutions/traefik-oidc-auth"
-
-	// Span names
-	SpanNameServeHTTP          = "oidc.serve_http"
-	SpanNameOIDCDiscovery      = "oidc.discovery"
-	SpanNameHandleCallback     = "oidc.handle_callback"
-	SpanNameHandleLogout       = "oidc.handle_logout"
-	SpanNameTokenExchange      = "oidc.token_exchange"
-	SpanNameTokenValidation    = "oidc.token_validation"
-	SpanNameJWKSFetch          = "oidc.jwks_fetch"
-	SpanNameUserInfoFetch      = "oidc.userinfo_fetch"
-	SpanNameTokenIntrospection = "oidc.token_introspection"
-	SpanNameSessionValidation  = "oidc.session_validation"
-	SpanNameAuthorizationCheck = "oidc.authorization_check"
-	SpanNameProviderRedirect   = "oidc.provider_redirect"
-
-	// Attribute keys
-	AttrOIDCProvider           = attribute.Key("oidc.provider")
-	AttrOIDCClientID           = attribute.Key("oidc.client_id")
-	AttrOIDCScopes             = attribute.Key("oidc.scopes")
-	AttrOIDCTokenType          = attribute.Key("oidc.token_type")
-	AttrOIDCTokenValidation    = attribute.Key("oidc.token_validation_method")
-	AttrOIDCSessionID          = attribute.Key("oidc.session_id")
-	AttrOIDCUserID             = attribute.Key("oidc.user_id")
-	AttrOIDCUserEmail          = attribute.Key("oidc.user_email")
-	AttrOIDCAuthResult         = attribute.Key("oidc.auth_result")
-	AttrOIDCAuthReason         = attribute.Key("oidc.auth_reason")
-	AttrOIDCBypassRule         = attribute.Key("oidc.bypass_rule")
-	AttrOIDCJSRequest          = attribute.Key("oidc.js_request")
-	AttrOIDCErrorType          = attribute.Key("oidc.error_type")
-	AttrOIDCDiscoveryEndpoint  = attribute.Key("oidc.discovery_endpoint")
-	AttrOIDCTokenEndpoint      = attribute.Key("oidc.token_endpoint")
-	AttrOIDCJWKSEndpoint       = attribute.Key("oidc.jwks_endpoint")
-	AttrOIDCUserInfoEndpoint   = attribute.Key("oidc.userinfo_endpoint")
+	TracerName                 = "github.com/sevensolutions/traefik-oidc-auth"
 	AttrOIDCIntrospectEndpoint = attribute.Key("oidc.introspect_endpoint")
 	AttrOIDCClaimAssertion     = attribute.Key("oidc.claim_assertion")
 	AttrOIDCMetricsEnabled     = attribute.Key("oidc.metrics_enabled")

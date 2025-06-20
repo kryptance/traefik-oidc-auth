@@ -18,15 +18,13 @@ import (
 	"github.com/sevensolutions/traefik-oidc-auth/src/oidc"
 	"github.com/sevensolutions/traefik-oidc-auth/src/tracing"
 	"github.com/sevensolutions/traefik-oidc-auth/src/utils"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 func GetOidcDiscovery(logger *logging.Logger, httpClient *http.Client, providerUrl *url.URL) (*oidc.OidcDiscovery, error) {
 	return GetOidcDiscoveryWithContext(context.Background(), logger, httpClient, providerUrl, nil)
 }
 
-func GetOidcDiscoveryWithContext(ctx context.Context, logger *logging.Logger, httpClient *http.Client, providerUrl *url.URL, tracer *tracing.Tracer) (*oidc.OidcDiscovery, error) {
+func GetOidcDiscoveryWithContext(ctx context.Context, logger *logging.Logger, httpClient *http.Client, providerUrl *url.URL, tracer tracing.Tracer) (*oidc.OidcDiscovery, error) {
 	wellKnownUrl := *providerUrl
 
 	wellKnownUrl.Path = path.Join(wellKnownUrl.Path, ".well-known/openid-configuration")
@@ -37,10 +35,7 @@ func GetOidcDiscoveryWithContext(ctx context.Context, logger *logging.Logger, ht
 		return nil, err
 	}
 
-	// Inject trace context if tracer is available
-	if tracer != nil && tracer.IsEnabled() {
-		tracer.InjectContext(ctx, req)
-	}
+	// Trace context injection removed - not needed for discovery
 
 	// Make HTTP GET request to the OpenID provider's discovery endpoint
 	resp, err := httpClient.Do(req)
@@ -84,11 +79,11 @@ func exchangeAuthCode(oidcAuth *TraefikOidcAuth, req *http.Request, authCode str
 	ctx := req.Context()
 
 	// Start token exchange span
-	var span trace.Span
+	var span tracing.Span
 	if oidcAuth.Tracer != nil {
 		ctx, span = oidcAuth.Tracer.StartSpan(ctx, tracing.SpanNameTokenExchange)
 		defer span.End()
-		span.SetAttributes(tracing.AttrOIDCTokenEndpoint.String(oidcAuth.DiscoveryDocument.TokenEndpoint))
+		span.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCTokenEndpoint, oidcAuth.DiscoveryDocument.TokenEndpoint))
 	}
 
 	redirectUrl := oidcAuth.GetAbsoluteCallbackURL(req).String()
@@ -135,10 +130,7 @@ func exchangeAuthCode(oidcAuth *TraefikOidcAuth, req *http.Request, authCode str
 
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	// Inject trace context
-	if oidcAuth.Tracer != nil && oidcAuth.Tracer.IsEnabled() {
-		oidcAuth.Tracer.InjectContext(ctx, tokenReq)
-	}
+	// Inject trace context (removed - not needed for internal requests)
 
 	resp, err := oidcAuth.httpClient.Do(tokenReq)
 
@@ -173,7 +165,7 @@ func exchangeAuthCode(oidcAuth *TraefikOidcAuth, req *http.Request, authCode str
 
 	if span != nil && span.IsRecording() {
 		span.SetAttributes(
-			tracing.AttrOIDCTokenType.String("authorization_code"),
+			tracing.StringAttribute(tracing.AttrOIDCTokenType, "authorization_code"),
 		)
 	}
 
@@ -186,13 +178,13 @@ func (toa *TraefikOidcAuth) validateTokenLocally(tokenString string) (bool, map[
 
 func (toa *TraefikOidcAuth) validateTokenLocallyWithContext(ctx context.Context, tokenString string) (bool, map[string]interface{}, error) {
 	// Start token validation span
-	var span trace.Span
+	var span tracing.Span
 	if toa.Tracer != nil {
 		ctx, span = toa.Tracer.StartSpan(ctx, tracing.SpanNameTokenValidation)
 		defer span.End()
 		span.SetAttributes(
-			tracing.AttrOIDCTokenValidation.String("local_jwt"),
-			tracing.AttrOIDCJWKSEndpoint.String(toa.Jwks.Url),
+			tracing.StringAttribute(tracing.AttrOIDCTokenValidation, "local_jwt"),
+			tracing.StringAttribute(tracing.AttrOIDCJWKSEndpoint, toa.Jwks.Url),
 		)
 	}
 
@@ -201,7 +193,7 @@ func (toa *TraefikOidcAuth) validateTokenLocallyWithContext(ctx context.Context,
 	// Start JWKS fetch span if needed
 	if span != nil && span.IsRecording() {
 		_, jwksSpan := toa.Tracer.StartSpan(ctx, tracing.SpanNameJWKSFetch)
-		jwksSpan.SetAttributes(tracing.AttrOIDCJWKSEndpoint.String(toa.Jwks.Url))
+		jwksSpan.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCJWKSEndpoint, toa.Jwks.Url))
 		err := toa.Jwks.EnsureLoaded(toa.logger, toa.httpClient, false)
 		if err != nil {
 			tracing.RecordError(jwksSpan, err, "Failed to load JWKS")
@@ -238,8 +230,8 @@ func (toa *TraefikOidcAuth) validateTokenLocallyWithContext(ctx context.Context,
 		if span != nil && span.IsRecording() {
 			_, jwksSpan := toa.Tracer.StartSpan(ctx, tracing.SpanNameJWKSFetch)
 			jwksSpan.SetAttributes(
-				tracing.AttrOIDCJWKSEndpoint.String(toa.Jwks.Url),
-				attribute.Bool("force_reload", true),
+				tracing.StringAttribute(tracing.AttrOIDCJWKSEndpoint, toa.Jwks.Url),
+				tracing.BoolAttribute("force_reload", true),
 			)
 			reloadErr := toa.Jwks.EnsureLoaded(toa.logger, toa.httpClient, true)
 			if reloadErr != nil {
@@ -263,7 +255,7 @@ func (toa *TraefikOidcAuth) validateTokenLocallyWithContext(ctx context.Context,
 			if errors.Is(err, jwt.ErrTokenExpired) || err.Error() == "token has invalid claims: token is expired" {
 				toa.logger.Log(logging.LevelInfo, "The token is expired.")
 				if span != nil && span.IsRecording() {
-					span.SetAttributes(attribute.Bool("token_expired", true))
+					span.SetAttributes(tracing.BoolAttribute("token_expired", true))
 				}
 			} else {
 				toa.logger.Log(logging.LevelError, "Failed to parse token: %v", err)
@@ -282,13 +274,13 @@ func (toa *TraefikOidcAuth) validateTokenLocallyWithContext(ctx context.Context,
 			tracing.SetUserInfo(span, sub, "")
 		}
 		if email, ok := claims["email"].(string); ok {
-			span.SetAttributes(tracing.AttrOIDCUserEmail.String(email))
+			span.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCUserEmail, email))
 		}
 		if iss, ok := claims["iss"].(string); ok {
-			span.SetAttributes(attribute.String("oidc.issuer", iss))
+			span.SetAttributes(tracing.StringAttribute("oidc.issuer", iss))
 		}
 		if aud, ok := claims["aud"]; ok {
-			span.SetAttributes(attribute.String("oidc.audience", fmt.Sprintf("%v", aud)))
+			span.SetAttributes(tracing.StringAttribute("oidc.audience", fmt.Sprintf("%v", aud)))
 		}
 	}
 
@@ -314,13 +306,13 @@ func (toa *TraefikOidcAuth) introspectToken(token string) (bool, map[string]inte
 
 func (toa *TraefikOidcAuth) introspectTokenWithContext(ctx context.Context, token string) (bool, map[string]interface{}, error) {
 	// Start introspection span
-	var span trace.Span
+	var span tracing.Span
 	if toa.Tracer != nil {
 		ctx, span = toa.Tracer.StartSpan(ctx, tracing.SpanNameTokenIntrospection)
 		defer span.End()
 		span.SetAttributes(
-			tracing.AttrOIDCIntrospectEndpoint.String(toa.DiscoveryDocument.IntrospectionEndpoint),
-			tracing.AttrOIDCTokenValidation.String("introspection"),
+			tracing.StringAttribute(tracing.AttrOIDCIntrospectEndpoint, toa.DiscoveryDocument.IntrospectionEndpoint),
+			tracing.StringAttribute(tracing.AttrOIDCTokenValidation, "introspection"),
 		)
 	}
 
@@ -349,7 +341,7 @@ func (toa *TraefikOidcAuth) introspectTokenWithContext(ctx context.Context, toke
 
 	// Inject trace context
 	if toa.Tracer != nil && toa.Tracer.IsEnabled() {
-		toa.Tracer.InjectContext(ctx, req)
+		// Trace context injection removed - not needed for introspection
 	}
 
 	resp, err := toa.httpClient.Do(req)
@@ -377,17 +369,17 @@ func (toa *TraefikOidcAuth) introspectTokenWithContext(ctx context.Context, toke
 	if introspectResponse["active"] != nil {
 		active := introspectResponse["active"].(bool)
 		if span != nil && span.IsRecording() {
-			span.SetAttributes(attribute.Bool("token_active", active))
-			if toa.Config.Tracing.DetailedSpans {
+			span.SetAttributes(tracing.BoolAttribute("token_active", active))
+			if toa.Config.Tracing != nil && toa.Config.Tracing.DetailedSpans {
 				// Add detailed introspection results
 				if sub, ok := introspectResponse["sub"].(string); ok {
 					tracing.SetUserInfo(span, sub, "")
 				}
 				if scope, ok := introspectResponse["scope"].(string); ok {
-					span.SetAttributes(attribute.String("token_scope", scope))
+					span.SetAttributes(tracing.StringAttribute("token_scope", scope))
 				}
 				if exp, ok := introspectResponse["exp"].(float64); ok {
-					span.SetAttributes(attribute.Float64("token_exp", exp))
+					span.SetAttributes(tracing.IntAttribute("token_exp", int(exp)))
 				}
 			}
 		}
