@@ -166,7 +166,6 @@ type TracingConfig struct {
 	DetailedSpans bool `json:"detailed_spans" default:"false"`
 }
 
-// Will be called by traefik
 func CreateConfig() *Config {
 	return &Config{
 		LogLevel: logging.LevelWarn,
@@ -226,7 +225,14 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 
 	logger := logging.CreateLogger(config.LogLevel)
 
-	logger.Log(logging.LevelInfo, "Loading Configuration...")
+	logger.Log(logging.LevelInfo, "Loading Configuration for plugin: %s", name)
+	logger.Log(logging.LevelDebug, "Log level: %s", config.LogLevel)
+
+	// Log the entire config struct for debugging
+	logger.Log(logging.LevelError, "Full config received: %+v", config)
+	if config.Provider != nil {
+		logger.Log(logging.LevelError, "Provider config: %+v", *config.Provider)
+	}
 
 	if config.Provider == nil {
 		return nil, errors.New("missing provider configuration")
@@ -241,6 +247,42 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 
 	var err error
 
+	// Parse boolean values from string fields
+	if config.Provider.InsecureSkipVerify != "" {
+		config.Provider.InsecureSkipVerifyBool = utils.ParseBool(config.Provider.InsecureSkipVerify)
+	}
+	if config.Provider.UsePkce != "" {
+		config.Provider.UsePkceBool = utils.ParseBool(config.Provider.UsePkce)
+	}
+	if config.Provider.ValidateAudience != "" {
+		config.Provider.ValidateAudienceBool = utils.ParseBool(config.Provider.ValidateAudience)
+	}
+	if config.Provider.ValidateIssuer != "" {
+		config.Provider.ValidateIssuerBool = utils.ParseBool(config.Provider.ValidateIssuer)
+	}
+	if config.Provider.DisableTokenValidation != "" {
+		config.Provider.DisableTokenValidationBool = utils.ParseBool(config.Provider.DisableTokenValidation)
+	}
+
+	// Log expanded provider configuration
+	logger.Log(logging.LevelDebug, "Provider URL (expanded): %s", config.Provider.Url)
+	logger.Log(logging.LevelDebug, "Provider Client ID (expanded): %s", config.Provider.ClientId)
+	logger.Log(logging.LevelDebug, "Provider Client Secret (expanded): %s", strings.Repeat("*", len(config.Provider.ClientSecret)))
+	logger.Log(logging.LevelDebug, "Provider InsecureSkipVerifyBool: %v", config.Provider.InsecureSkipVerifyBool)
+	logger.Log(logging.LevelDebug, "Provider UsePkceBool: %v", config.Provider.UsePkceBool)
+	logger.Log(logging.LevelDebug, "Provider ValidateAudienceBool: %v", config.Provider.ValidateAudienceBool)
+	logger.Log(logging.LevelDebug, "Provider ValidateIssuerBool: %v", config.Provider.ValidateIssuerBool)
+
+	// Validate required provider fields
+	if config.Provider.ClientId == "" {
+		logger.Log(logging.LevelError, "Provider ClientId is required but not provided")
+		return nil, errors.New("provider client_id is required")
+	}
+	if config.Provider.ClientSecret == "" {
+		logger.Log(logging.LevelError, "Provider ClientSecret is required but not provided")
+		return nil, errors.New("provider client_secret is required")
+	}
+
 	config.Secret = utils.ExpandEnvironmentVariableString(config.Secret)
 	config.CallbackUri = utils.ExpandEnvironmentVariableString(config.CallbackUri)
 	config.LoginUri = utils.ExpandEnvironmentVariableString(config.LoginUri)
@@ -250,40 +292,13 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 	config.CookieNamePrefix = utils.ExpandEnvironmentVariableString(config.CookieNamePrefix)
 	config.UnauthorizedBehavior = utils.ExpandEnvironmentVariableString(config.UnauthorizedBehavior)
 	config.BypassAuthenticationRule = utils.ExpandEnvironmentVariableString(config.BypassAuthenticationRule)
-	config.Provider.Url = utils.ExpandEnvironmentVariableString(config.Provider.Url)
-	config.Provider.ClientId = utils.ExpandEnvironmentVariableString(config.Provider.ClientId)
-	config.Provider.ClientSecret = utils.ExpandEnvironmentVariableString(config.Provider.ClientSecret)
-	config.Provider.UsePkceBool, err = utils.ExpandEnvironmentVariableBoolean(config.Provider.UsePkce, config.Provider.UsePkceBool)
-	if err != nil {
-		return nil, err
-	}
-	config.Provider.ValidateIssuerBool, err = utils.ExpandEnvironmentVariableBoolean(config.Provider.ValidateIssuer, config.Provider.ValidateIssuerBool)
-	if err != nil {
-		return nil, err
-	}
-	config.Provider.ValidIssuer = utils.ExpandEnvironmentVariableString(config.Provider.ValidIssuer)
-	config.Provider.ValidateAudienceBool, err = utils.ExpandEnvironmentVariableBoolean(config.Provider.ValidateAudience, config.Provider.ValidateAudienceBool)
-	if err != nil {
-		return nil, err
-	}
-	config.Provider.ValidAudience = utils.ExpandEnvironmentVariableString(config.Provider.ValidAudience)
-	config.Provider.InsecureSkipVerifyBool, err = utils.ExpandEnvironmentVariableBoolean(config.Provider.InsecureSkipVerify, config.Provider.InsecureSkipVerifyBool)
-	if err != nil {
-		return nil, err
-	}
 
-	config.Provider.CABundle = utils.ExpandEnvironmentVariableString(config.Provider.CABundle)
-	config.Provider.CABundleFile = utils.ExpandEnvironmentVariableString(config.Provider.CABundleFile)
-	config.Provider.TokenValidation = utils.ExpandEnvironmentVariableString(config.Provider.TokenValidation)
-	config.Provider.DisableTokenValidationBool, err = utils.ExpandEnvironmentVariableBoolean(config.Provider.DisableTokenValidation, config.Provider.DisableTokenValidationBool)
-	if err != nil {
-		return nil, err
-	}
-
-	config.ErrorPages.Unauthenticated.FilePath = utils.ExpandEnvironmentVariableString(config.ErrorPages.Unauthenticated.FilePath)
-	config.ErrorPages.Unauthenticated.RedirectTo = utils.ExpandEnvironmentVariableString(config.ErrorPages.Unauthenticated.RedirectTo)
-	config.ErrorPages.Unauthorized.FilePath = utils.ExpandEnvironmentVariableString(config.ErrorPages.Unauthorized.FilePath)
-	config.ErrorPages.Unauthorized.RedirectTo = utils.ExpandEnvironmentVariableString(config.ErrorPages.Unauthorized.RedirectTo)
+	// Log expanded configuration values
+	logger.Log(logging.LevelDebug, "CallbackUri (expanded): %s", config.CallbackUri)
+	logger.Log(logging.LevelDebug, "LoginUri (expanded): %s", config.LoginUri)
+	logger.Log(logging.LevelDebug, "LogoutUri (expanded): %s", config.LogoutUri)
+	logger.Log(logging.LevelDebug, "CookieNamePrefix: %s", config.CookieNamePrefix)
+	logger.Log(logging.LevelDebug, "UnauthorizedBehavior: %s", config.UnauthorizedBehavior)
 
 	if config.Secret == DefaultSecret {
 		logger.Log(logging.LevelWarn, "You're using the default secret! It is highly recommended to change the secret by specifying a random 32 character value using the Secret-option.")
@@ -291,7 +306,7 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 
 	secret := []byte(config.Secret)
 	if len(secret) != 32 {
-		logger.Log(logging.LevelError, "Invalid secret provided. Secret must be exactly 32 characters in length. The provided secret has %d characters.", len(secret))
+		logger.Log(logging.LevelError, "Invalid secret provided. Secret must be exactly 32 characters in length. The provided secret has %d characters: %s", len(secret), config.Secret)
 		return nil, errors.New("invalid secret")
 	}
 
@@ -303,6 +318,9 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 	// Specify default scopes if not provided
 	if config.Scopes == nil || len(config.Scopes) == 0 {
 		config.Scopes = []string{"openid", "profile", "email"}
+		logger.Log(logging.LevelDebug, "Using default scopes: %s", strings.Join(config.Scopes, ", "))
+	} else {
+		logger.Log(logging.LevelDebug, "Configured scopes: %s", strings.Join(config.Scopes, ", "))
 	}
 
 	parsedURL, err := utils.ParseUrl(config.Provider.Url)
@@ -321,9 +339,13 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 		// For EntraID, we cannot validate the access token using JWKS, so we fall back to the id token by default
 		if strings.HasPrefix(config.Provider.Url, "https://login.microsoftonline.com") {
 			config.Provider.TokenValidation = "IdToken"
+			logger.Log(logging.LevelDebug, "Detected Microsoft EntraID provider, using IdToken validation")
 		} else {
 			config.Provider.TokenValidation = "AccessToken"
+			logger.Log(logging.LevelDebug, "Using default AccessToken validation")
 		}
+	} else {
+		logger.Log(logging.LevelDebug, "Token validation configured as: %s", config.Provider.TokenValidation)
 	}
 
 	logger.Log(logging.LevelInfo, "Provider Url: %v", parsedURL)
@@ -333,18 +355,63 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 	} else {
 		logger.Log(logging.LevelInfo, "Callback URL is relative, will overlay any wrapped host")
 	}
-	logger.Log(logging.LevelDebug, "Scopes: %s", strings.Join(config.Scopes, ", "))
-	logger.Log(logging.LevelDebug, "SessionCookie: %v", config.SessionCookie)
+
+	// Log session cookie configuration
+	logger.Log(logging.LevelDebug, "SessionCookie configuration:")
+	logger.Log(logging.LevelDebug, "  - Path: %s", config.SessionCookie.Path)
+	logger.Log(logging.LevelDebug, "  - Domain: %s", config.SessionCookie.Domain)
+	logger.Log(logging.LevelDebug, "  - Secure: %v", config.SessionCookie.Secure)
+	logger.Log(logging.LevelDebug, "  - HttpOnly: %v", config.SessionCookie.HttpOnly)
+	logger.Log(logging.LevelDebug, "  - SameSite: %s", config.SessionCookie.SameSite)
+	logger.Log(logging.LevelDebug, "  - MaxAge: %d", config.SessionCookie.MaxAge)
+
+	// Log authorization configuration if present
+	if config.AuthorizationHeader != nil && config.AuthorizationHeader.Name != "" {
+		logger.Log(logging.LevelDebug, "Authorization header name: %s", config.AuthorizationHeader.Name)
+	}
+	if config.AuthorizationCookie != nil && config.AuthorizationCookie.Name != "" {
+		logger.Log(logging.LevelDebug, "Authorization cookie name: %s", config.AuthorizationCookie.Name)
+	}
+
+	// Log authorization claims if configured
+	if config.Authorization != nil && len(config.Authorization.AssertClaims) > 0 {
+		logger.Log(logging.LevelDebug, "Authorization claim assertions configured:")
+		for _, claim := range config.Authorization.AssertClaims {
+			if len(claim.AnyOf) > 0 {
+				logger.Log(logging.LevelDebug, "  - Claim '%s' must have any of: %v", claim.Name, claim.AnyOf)
+			}
+			if len(claim.AllOf) > 0 {
+				logger.Log(logging.LevelDebug, "  - Claim '%s' must have all of: %v", claim.Name, claim.AllOf)
+			}
+		}
+	}
+
+	// Log header configuration
+	if len(config.Headers) > 0 {
+		logger.Log(logging.LevelDebug, "Custom headers configured:")
+		for idx, header := range config.Headers {
+			logger.Log(logging.LevelDebug, "  - Header[%d]: Name='%s', Value='%s'", idx, header.Name, header.Value)
+			// Check if it's a template
+			if strings.Contains(header.Value, "{{") && strings.Contains(header.Value, "}}") {
+				logger.Log(logging.LevelDebug, "    ^ This appears to be a template")
+			}
+		}
+	} else {
+		logger.Log(logging.LevelDebug, "No custom headers configured")
+	}
 
 	var conditionalAuth *rules.RequestCondition
 	if config.BypassAuthenticationRule != "" {
+		logger.Log(logging.LevelDebug, "Parsing bypass authentication rule: %s", config.BypassAuthenticationRule)
 		ca, err := rules.ParseRequestCondition(config.BypassAuthenticationRule)
 
 		if err != nil {
+			logger.Log(logging.LevelError, "Failed to parse bypass authentication rule: %s", err.Error())
 			return nil, err
 		}
 
 		conditionalAuth = ca
+		logger.Log(logging.LevelInfo, "Bypass authentication rule configured successfully")
 	}
 
 	rootCAs, _ := x509.SystemCertPool()
@@ -365,7 +432,7 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 			caBundleData = []byte(config.Provider.CABundle)
 		}
 
-		logger.Log(logging.LevelDebug, "Loaded CA bundle provided inline")
+		logger.Log(logging.LevelDebug, "Loaded CA bundle provided inline (%d bytes)", len(caBundleData))
 	} else if config.Provider.CABundleFile != "" {
 		caBundleData, err = os.ReadFile(config.Provider.CABundleFile)
 		if err != nil {
@@ -373,7 +440,7 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 			return nil, err
 		}
 
-		logger.Log(logging.LevelDebug, "Loaded CA bundle from %v", config.Provider.CABundleFile)
+		logger.Log(logging.LevelDebug, "Loaded CA bundle from %v (%d bytes)", config.Provider.CABundleFile, len(caBundleData))
 	}
 
 	if caBundleData != nil {
@@ -398,6 +465,50 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 		Transport: httpTransport,
 	}
 
+	// Log JavaScript request detection configuration
+	if config.JavaScriptRequestDetection != nil && config.JavaScriptRequestDetection.Headers != nil {
+		logger.Log(logging.LevelDebug, "JavaScript request detection headers configured:")
+		for header, values := range config.JavaScriptRequestDetection.Headers {
+			logger.Log(logging.LevelDebug, "  - %s: %v", header, values)
+		}
+	}
+
+	// Log error pages configuration
+	if config.ErrorPages != nil {
+		if config.ErrorPages.Unauthenticated != nil {
+			if config.ErrorPages.Unauthenticated.FilePath != "" {
+				logger.Log(logging.LevelDebug, "Custom unauthenticated error page file: %s", config.ErrorPages.Unauthenticated.FilePath)
+			}
+			if config.ErrorPages.Unauthenticated.RedirectTo != "" {
+				logger.Log(logging.LevelDebug, "Unauthenticated redirect configured: %s", config.ErrorPages.Unauthenticated.RedirectTo)
+			}
+		}
+		if config.ErrorPages.Unauthorized != nil {
+			if config.ErrorPages.Unauthorized.FilePath != "" {
+				logger.Log(logging.LevelDebug, "Custom unauthorized error page file: %s", config.ErrorPages.Unauthorized.FilePath)
+			}
+			if config.ErrorPages.Unauthorized.RedirectTo != "" {
+				logger.Log(logging.LevelDebug, "Unauthorized redirect configured: %s", config.ErrorPages.Unauthorized.RedirectTo)
+			}
+		}
+	}
+
+	// Print configuration summary
+	logger.Log(logging.LevelInfo, "=== OIDC Auth Configuration Summary ===")
+	logger.Log(logging.LevelInfo, "Provider URL: %s", config.Provider.Url)
+	logger.Log(logging.LevelInfo, "Client ID: %s", config.Provider.ClientId)
+	logger.Log(logging.LevelInfo, "Client Secret: %s", strings.Repeat("*", len(config.Provider.ClientSecret)))
+	logger.Log(logging.LevelInfo, "Scopes: %s", strings.Join(config.Scopes, ", "))
+	logger.Log(logging.LevelInfo, "Callback URI: %s", config.CallbackUri)
+	logger.Log(logging.LevelInfo, "Login URI: %s", config.LoginUri)
+	logger.Log(logging.LevelInfo, "Logout URI: %s", config.LogoutUri)
+	logger.Log(logging.LevelInfo, "Cookie Name Prefix: %s", config.CookieNamePrefix)
+	logger.Log(logging.LevelInfo, "Token Validation Method: %s", config.Provider.TokenValidation)
+	logger.Log(logging.LevelInfo, "Use PKCE: %v", config.Provider.UsePkceBool)
+	logger.Log(logging.LevelInfo, "Validate Audience: %v", config.Provider.ValidateAudienceBool)
+	logger.Log(logging.LevelInfo, "Validate Issuer: %v", config.Provider.ValidateIssuerBool)
+	logger.Log(logging.LevelInfo, "=======================================")
+
 	logger.Log(logging.LevelInfo, "Configuration loaded successfully, starting OIDC Auth middleware...")
 
 	// Initialize metrics if enabled
@@ -405,6 +516,25 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 	if config.Metrics != nil && config.Metrics.Enabled {
 		metricsCollector = metrics.NewMetricsCollector()
 		logger.Log(logging.LevelInfo, "Metrics collection enabled with prefix: %s", config.Metrics.Prefix)
+		logger.Log(logging.LevelDebug, "Metrics endpoint path: %s", config.Metrics.Path)
+	}
+
+	// Log tracing configuration
+	if config.Tracing != nil {
+		// Parse tracing enabled field
+		if config.Tracing.Enabled != "" && config.Tracing.Enabled != "auto" {
+			config.Tracing.EnabledBool = utils.ParseBool(config.Tracing.Enabled)
+		}
+
+		logger.Log(logging.LevelDebug, "Tracing configuration:")
+		logger.Log(logging.LevelDebug, "  - Enabled: %s", config.Tracing.Enabled)
+		logger.Log(logging.LevelDebug, "  - EnabledBool: %v", config.Tracing.EnabledBool)
+		logger.Log(logging.LevelDebug, "  - Service Name: %s", config.Tracing.ServiceName)
+		logger.Log(logging.LevelDebug, "  - Sample Rate: %.2f", config.Tracing.SampleRate)
+		if config.Tracing.OtlpEndpoint != "" {
+			logger.Log(logging.LevelDebug, "  - OTLP Endpoint: %s", config.Tracing.OtlpEndpoint)
+		}
+		logger.Log(logging.LevelDebug, "  - Detailed Spans: %v", config.Tracing.DetailedSpans)
 	}
 
 	return &TraefikOidcAuth{

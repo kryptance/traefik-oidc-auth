@@ -61,7 +61,7 @@ func (toa *TraefikOidcAuth) EnsureOidcDiscoveryWithContext(ctx context.Context) 
 			if toa.Tracer != nil {
 				ctx, span = toa.Tracer.StartSpan(ctx, tracing.SpanNameOIDCDiscovery)
 				defer span.End()
-				span.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCDiscoveryEndpoint, parsedURL.String() + "/.well-known/openid-configuration"))
+				span.SetAttributes(tracing.StringAttribute(tracing.AttrOIDCDiscoveryEndpoint, parsedURL.String()+"/.well-known/openid-configuration"))
 			}
 
 			var jwks = &oidc.JwksHandler{}
@@ -273,6 +273,10 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		}
 
 		// Attach upstream headers
+		toa.logger.Log(logging.LevelDebug, "About to attach headers for authenticated request")
+		toa.logger.Log(logging.LevelDebug, "Session authorized: %v", session.IsAuthorized)
+		toa.logger.Log(logging.LevelDebug, "Number of configured headers: %d", len(toa.Config.Headers))
+
 		err = toa.attachHeaders(req, session, claims)
 		if err != nil {
 			toa.logger.Log(logging.LevelError, "Error while attaching headers: %s", err.Error())
@@ -282,6 +286,8 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		toa.logger.Log(logging.LevelDebug, "Headers attached successfully")
 
 		if updateSession {
 			if toa.Metrics != nil {
@@ -297,6 +303,22 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		if span != nil && span.IsRecording() {
 			tracing.SetAuthResult(span, "authenticated", "User authenticated successfully")
 		}
+
+		// Log headers being sent to backend (for debugging)
+		toa.logger.Log(logging.LevelDebug, "=== Headers being sent to backend ===")
+		for name, values := range req.Header {
+			for _, value := range values {
+				if name == "Authorization" && len(value) > 30 {
+					toa.logger.Log(logging.LevelDebug, "Header to backend: %s = %s... (redacted)", name, value[:30])
+				} else if name == "Cookie" && len(value) > 50 {
+					toa.logger.Log(logging.LevelDebug, "Header to backend: %s = %s... (redacted)", name, value[:50])
+				} else {
+					toa.logger.Log(logging.LevelDebug, "Header to backend: %s = %s", name, value)
+				}
+			}
+		}
+		toa.logger.Log(logging.LevelDebug, "=== End of headers to backend ===")
+
 		toa.sanitizeForUpstream(req)
 		toa.next.ServeHTTP(rw, req)
 		return
@@ -334,40 +356,80 @@ func (toa *TraefikOidcAuth) sanitizeForUpstream(req *http.Request) {
 }
 
 func (toa *TraefikOidcAuth) attachHeaders(req *http.Request, session *session.SessionState, claims map[string]interface{}) error {
-	if toa.Config.Headers != nil {
-		evalContext := make(map[string]interface{})
+	toa.logger.Log(logging.LevelDebug, "=== Starting header attachment ===")
 
-		evalContext["claims"] = claims
-		evalContext["accessToken"] = session.AccessToken
-		evalContext["idToken"] = session.IdToken
-		evalContext["refreshToken"] = session.RefreshToken
+	if toa.Config.Headers == nil {
+		toa.logger.Log(logging.LevelDebug, "No headers configured")
+		return nil
+	}
 
-		for _, header := range toa.Config.Headers {
-			if header.Value != "" {
-				if header.template == nil {
-					tpl, err := template.New("").Parse(header.Value)
+	toa.logger.Log(logging.LevelDebug, "Number of headers to attach: %d", len(toa.Config.Headers))
 
-					if err != nil {
-						return err
-					}
+	evalContext := make(map[string]interface{})
 
-					header.template = tpl
+	// Log token availability
+	toa.logger.Log(logging.LevelDebug, "Session ID: %s", session.Id)
+	toa.logger.Log(logging.LevelDebug, "Access token present: %v (length: %d)", session.AccessToken != "", len(session.AccessToken))
+	toa.logger.Log(logging.LevelDebug, "ID token present: %v (length: %d)", session.IdToken != "", len(session.IdToken))
+	toa.logger.Log(logging.LevelDebug, "Refresh token present: %v (length: %d)", session.RefreshToken != "", len(session.RefreshToken))
+
+	// Log first 20 chars of access token for debugging (redacted)
+	if session.AccessToken != "" && len(session.AccessToken) > 20 {
+		toa.logger.Log(logging.LevelDebug, "Access token preview: %s...", session.AccessToken[:20])
+	}
+
+	evalContext["claims"] = claims
+	evalContext["accessToken"] = session.AccessToken
+	evalContext["idToken"] = session.IdToken
+	evalContext["refreshToken"] = session.RefreshToken
+
+	// Log claims for debugging
+	toa.logger.Log(logging.LevelDebug, "Claims available: %v", claims)
+
+	for idx, header := range toa.Config.Headers {
+		toa.logger.Log(logging.LevelDebug, "Processing header [%d]: Name='%s', Value='%s'", idx, header.Name, header.Value)
+
+		if header.Value != "" {
+			if header.template == nil {
+				toa.logger.Log(logging.LevelDebug, "Parsing template for header '%s'", header.Name)
+				tpl, err := template.New("").Parse(header.Value)
+
+				if err != nil {
+					toa.logger.Log(logging.LevelError, "Failed to parse template for header '%s': %s", header.Name, err.Error())
+					return err
 				}
 
-				var renderedValue bytes.Buffer
-				err := header.template.Execute(&renderedValue, evalContext)
+				header.template = tpl
+				toa.logger.Log(logging.LevelDebug, "Template parsed successfully for header '%s'", header.Name)
+			}
 
-				if err == nil {
-					req.Header.Set(header.Name, renderedValue.String())
+			var renderedValue bytes.Buffer
+			err := header.template.Execute(&renderedValue, evalContext)
+
+			if err == nil {
+				finalValue := renderedValue.String()
+				req.Header.Set(header.Name, finalValue)
+
+				// Log the header value (redact if it's Authorization header)
+				if header.Name == "Authorization" && len(finalValue) > 30 {
+					toa.logger.Log(logging.LevelDebug, "Header set successfully: %s = %s... (redacted)", header.Name, finalValue[:30])
 				} else {
-					req.Header.Set(header.Name, err.Error())
+					toa.logger.Log(logging.LevelDebug, "Header set successfully: %s = %s", header.Name, finalValue)
 				}
 			} else {
-				req.Header.Set(header.Name, "")
+				errorMsg := err.Error()
+				req.Header.Set(header.Name, errorMsg)
+				toa.logger.Log(logging.LevelError, "Failed to execute template for header '%s': %s", header.Name, errorMsg)
+				toa.logger.Log(logging.LevelError, "Template content: '%s'", header.Value)
+				toa.logger.Log(logging.LevelError, "Context type info - claims: %T, accessToken: %T", evalContext["claims"], evalContext["accessToken"])
 			}
+		} else {
+			req.Header.Set(header.Name, "")
+			toa.logger.Log(logging.LevelDebug, "Header '%s' set to empty value", header.Name)
 		}
 	}
 
+	toa.logger.Log(logging.LevelDebug, "=== Header attachment completed ===")
 	return nil
 }
 

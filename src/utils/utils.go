@@ -60,6 +60,12 @@ func ExpandEnvironmentVariableBoolean(value string, defaultValue bool) (bool, er
 	return defaultValue, nil
 }
 
+// ParseBool parses a string value to boolean
+func ParseBool(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "true" || value == "1" || value == "yes" || value == "on"
+}
+
 func UrlIsAbsolute(u *url.URL) bool {
 	return u.Scheme != "" && u.Host != ""
 }
@@ -283,7 +289,7 @@ func IsXHRRequestWithHeaders(req *http.Request, headers map[string][]string) boo
 
 		// Check Accept header for JSON preference
 		accept := req.Header.Get("Accept")
-		
+
 		// If the Accept header contains JSON
 		if strings.Contains(accept, "application/json") {
 			// But also contains HTML, it's not an XHR request (browser wants both)
