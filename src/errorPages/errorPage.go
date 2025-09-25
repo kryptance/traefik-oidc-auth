@@ -12,12 +12,37 @@ import (
 )
 
 type ProblemDetails struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Detail string `json:"detail"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Detail    string `json:"detail"`
+	LoginUrl  string `json:"login_url,omitempty"`
+	LogoutUrl string `json:"logout_url,omitempty"`
 }
 
-func WriteError(logger *logging.Logger, page *ErrorPageConfig, rw http.ResponseWriter, req *http.Request, data map[string]interface{}) {
+func WriteError(logger *logging.Logger, page *ErrorPageConfig, rw http.ResponseWriter,
+	req *http.Request,
+	data map[string]interface{},
+	jsDetectionHeaders map[string][]string) {
+	// For XHR requests, skip any redirects and return JSON
+	if utils.IsXHRRequestWithHeaders(req, jsDetectionHeaders) {
+		problemDetails := ProblemDetails{
+			Type:   data["statusType"].(string),
+			Title:  data["statusName"].(string),
+			Detail: data["description"].(string),
+		}
+
+		// Add login and logout URLs if provided
+		if loginUrl, ok := data["loginUrl"].(string); ok && loginUrl != "" {
+			problemDetails.LoginUrl = loginUrl
+		}
+		if logoutUrl, ok := data["logoutUrl"].(string); ok && logoutUrl != "" {
+			problemDetails.LogoutUrl = logoutUrl
+		}
+
+		writeProblemDetail(logger, problemDetails, rw, data["statusCode"].(int))
+		return
+	}
+
 	if page.RedirectTo != "" {
 		http.Redirect(rw, req, page.RedirectTo, http.StatusFound)
 		return
@@ -40,6 +65,14 @@ func WriteError(logger *logging.Logger, page *ErrorPageConfig, rw http.ResponseW
 		Type:   data["statusType"].(string),
 		Title:  data["statusName"].(string),
 		Detail: data["description"].(string),
+	}
+
+	// Add login and logout URLs if provided (for non-XHR JSON requests)
+	if loginUrl, ok := data["loginUrl"].(string); ok && loginUrl != "" {
+		problemDetails.LoginUrl = loginUrl
+	}
+	if logoutUrl, ok := data["logoutUrl"].(string); ok && logoutUrl != "" {
+		problemDetails.LogoutUrl = logoutUrl
 	}
 
 	writeProblemDetail(logger, problemDetails, rw, data["statusCode"].(int))

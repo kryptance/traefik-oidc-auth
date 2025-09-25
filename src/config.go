@@ -61,6 +61,9 @@ type Config struct {
 
 	BypassAuthenticationRule string `json:"bypass_authentication_rule"`
 
+	// JavaScriptRequestDetection allows configuring how to detect JavaScript/AJAX requests
+	JavaScriptRequestDetection *JavaScriptRequestDetectionConfig `json:"javascript_request_detection"`
+
 	ErrorPages *errorPages.ErrorPagesConfig `json:"error_pages"`
 }
 
@@ -133,6 +136,12 @@ type HeaderConfig struct {
 	template *template.Template
 }
 
+type JavaScriptRequestDetectionConfig struct {
+	// Headers to check for JavaScript/AJAX request detection
+	// Each header can have a list of values to match against
+	Headers map[string][]string `json:"headers"`
+}
+
 // Will be called by traefik
 func CreateConfig() *Config {
 	return &Config{
@@ -167,6 +176,13 @@ func CreateConfig() *Config {
 		UnauthorizedBehavior: "Auto",
 		Authorization: &AuthorizationConfig{
 			CheckOnEveryRequest: false,
+		},
+		JavaScriptRequestDetection: &JavaScriptRequestDetectionConfig{
+			Headers: map[string][]string{
+				"X-Requested-With": {"XMLHttpRequest"},
+				"Sec-Fetch-Mode":   {"cors", "same-origin"},
+				"Content-Type":     {"application/json"},
+			},
 		},
 		ErrorPages: &errorPages.ErrorPagesConfig{
 			Unauthenticated: &errorPages.ErrorPageConfig{},
@@ -291,6 +307,14 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 	}
 	logger.Log(logging.LevelDebug, "Scopes: %s", strings.Join(config.Scopes, ", "))
 	logger.Log(logging.LevelDebug, "SessionCookie: %v", config.SessionCookie)
+
+	// Log JavaScript request detection configuration
+	if config.JavaScriptRequestDetection != nil && config.JavaScriptRequestDetection.Headers != nil {
+		logger.Log(logging.LevelDebug, "JavaScript request detection headers configured:")
+		for header, values := range config.JavaScriptRequestDetection.Headers {
+			logger.Log(logging.LevelDebug, "  - %s: %v", header, values)
+		}
+	}
 
 	if config.Provider.TokenRenewalThreshold < 0.5 || config.Provider.TokenRenewalThreshold > 1.0 {
 		logger.Log(logging.LevelError, "Invalid TokenRenewalThreshold. The value must be >= 0.5 and <= 1.0.")

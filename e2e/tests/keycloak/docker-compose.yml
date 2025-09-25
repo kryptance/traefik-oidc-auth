@@ -4,11 +4,11 @@ services:
     restart: unless-stopped
     privileged: true
     ports:
-      - "8000:8080"
-      - "8001:8443"
-      - "9000:9000" # Health Checks
+      - "0:8080"      # Dynamic port allocation
+      - "0:8443"      # Dynamic port allocation
+      - "0:9000"      # Health Checks - Dynamic port
     environment:
-      KC_HOSTNAME: "http://localhost:8000"
+      KC_HOSTNAME: "http://localhost:8080"  # Will be overridden by test setup
       KC_DB_URL: jdbc:postgresql://keycloak_postgres:5432/keycloak
       KC_DB: postgres
       KC_DB_USERNAME: postgres
@@ -37,9 +37,9 @@ services:
   traefik:
     image: "traefik:v3.5.0"
     ports:
-      - "9080:80"
-      - "9443:443"
-      - "8080:8080"
+      - "0:80"        # Dynamic port allocation
+      - "0:443"       # Dynamic port allocation
+      - "0:8080"      # Dynamic port allocation
     extra_hosts:
       - "localhost:172.17.0.1" # To make OIDC discovery work correctly
       - "127-0-0-1.sslip.io:172.17.0.1"
@@ -51,8 +51,8 @@ services:
       - "./certificates:/certificates:ro"
       - "./data:/data:ro"
     environment:
-      PROVIDER_URL_HTTP: http://localhost:8000/realms/master
-      PROVIDER_URL_HTTPS: https://localhost:8001/realms/master
+      PROVIDER_URL_HTTP: http://keycloak:8080/realms/master    # Use internal network
+      PROVIDER_URL_HTTPS: https://keycloak:8443/realms/master  # Use internal network
       CLIENT_ID: traefik
       CLIENT_SECRET: LQslcjK8ZeRrrhW7jKaFUUous9W5QvCr
 

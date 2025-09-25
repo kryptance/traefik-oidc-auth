@@ -330,3 +330,57 @@ func IsHtmlRequest(req *http.Request) bool {
 	// Assume HTML request have text/html or application/xhtml+xml with the highest weight
 	return acceptTypes[0].Type == "text/html" || acceptTypes[0].Type == "application/xhtml+xml"
 }
+
+// IsXHRRequest checks if the request is an XMLHttpRequest/AJAX request
+func IsXHRRequest(req *http.Request) bool {
+	// Legacy behavior for backward compatibility
+	return IsXHRRequestWithHeaders(req, nil)
+}
+
+// IsXHRRequestWithHeaders checks if the request is an XMLHttpRequest/AJAX request using configurable headers
+func IsXHRRequestWithHeaders(req *http.Request, headers map[string][]string) bool {
+	// If no custom headers configured, use legacy behavior
+	if headers == nil || len(headers) == 0 {
+		// Check X-Requested-With header (common for AJAX requests)
+		if req.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+			return true
+		}
+
+		// Check Accept header for JSON preference
+		accept := req.Header.Get("Accept")
+
+		// If the Accept header contains JSON
+		if strings.Contains(accept, "application/json") {
+			// But also contains HTML, it's not an XHR request (browser wants both)
+			if strings.Contains(accept, "text/html") {
+				return false
+			}
+			// Only JSON, no HTML - it's an XHR request
+			return true
+		}
+
+		return false
+	}
+
+	// Check configured headers
+	for headerName, validValues := range headers {
+		headerValue := req.Header.Get(headerName)
+		if headerValue == "" {
+			continue
+		}
+
+		// Special handling for Accept header - check if HTML is also requested
+		if strings.EqualFold(headerName, "Accept") && strings.Contains(headerValue, "text/html") {
+			continue
+		}
+
+		// Check if header value matches any of the configured values
+		for _, validValue := range validValues {
+			if strings.Contains(strings.ToLower(headerValue), strings.ToLower(validValue)) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
