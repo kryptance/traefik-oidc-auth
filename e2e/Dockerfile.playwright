@@ -1,0 +1,23 @@
+FROM mcr.microsoft.com/playwright:v1.49.1-noble
+
+# Install Docker CLI and Docker Compose to allow tests to manage containers
+RUN apt-get update && apt-get install -y \
+    docker.io \
+    docker-compose \
+    python3-setuptools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /e2e
+
+# Copy all files first (needed for prepare script)
+COPY . .
+
+# Copy our docker wrapper and put it in PATH before the real docker
+COPY bin/docker /usr/local/bin/docker
+RUN chmod +x /usr/local/bin/docker
+
+# Install dependencies (skip prepare script since we're in Docker)
+RUN npm ci --ignore-scripts
+
+# The tests will be run via docker-compose or docker run
+CMD ["npm", "test"]

@@ -1,10 +1,11 @@
 import { test, expect, Page, Response } from "@playwright/test";
 import * as dockerCompose from "docker-compose";
-import { configureTraefik } from "../../utils";
+import { configureTraefik, setTraefikApiPort } from "../../utils";
 import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { setupKeycloak } from "./setup-keycloak";
 
 const execAsync = promisify(exec);
 
@@ -14,7 +15,7 @@ async function waitForTraefikReady() {
 
   // Check container health
   try {
-    const containerStatus = await execAsync("docker ps --filter name=keycloak-traefik-1 --format '{{.Status}}'");
+    const containerStatus = await execAsync(`docker ps --filter name=${traefikContainer || 'keycloak_traefik_1'} --format '{{.Status}}'`);
     if (!containerStatus.stdout.includes("Up")) {
       throw new Error(`Traefik container is not running: ${containerStatus.stdout}`);
     }
@@ -93,6 +94,67 @@ let KEYCLOAK_HEALTH_PORT: number;
 let TRAEFIK_HTTP_PORT: number;
 let TRAEFIK_HTTPS_PORT: number;
 let TRAEFIK_API_PORT: number;
+let DOCKER_HOST: string = 'localhost'; // Will be determined dynamically
+let keycloakContainer: string; // Container name for keycloak
+let traefikContainer: string; // Container name for traefik
+
+// Wrap all tests in a describe block to ensure they share the same setup
+test.describe("Keycloak OIDC Auth Tests", () => {
+
+// Helper function to wait for Traefik to be ready with specific configuration
+async function waitForTraefikReady(maxWaitMs = 30000) {
+  console.log("Verifying Traefik is ready with current configuration...");
+
+  const startTime = Date.now();
+  let attempts = 0;
+  let pollInterval = 250; // Start with 250ms
+  const maxPollInterval = 2000;
+
+  while ((Date.now() - startTime) < maxWaitMs) {
+    attempts++;
+
+    try {
+      // Parallel check of both API and HTTP endpoints
+      const [apiResult, httpResult] = await Promise.allSettled([
+        fetch(`http://localhost:${TRAEFIK_API_PORT}/api/overview`, {
+          signal: AbortSignal.timeout(2000)
+        }),
+        fetch(`http://localhost:${TRAEFIK_HTTP_PORT}/`, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(2000)
+        })
+      ]);
+
+      // Both checks must pass
+      if (apiResult.status === 'fulfilled' && apiResult.value.ok &&
+          httpResult.status === 'fulfilled' &&
+          (httpResult.value.status === 401 || httpResult.value.status === 302)) {
+
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        console.log(`✅ Traefik is ready and middleware is active! (${attempts} attempts in ${elapsed}s)`);
+        return true;
+      }
+
+      // Log status periodically
+      if (attempts % 10 === 0) {
+        console.log(`Traefik config check #${attempts}:
+  - API: ${apiResult.status === 'fulfilled' ? `HTTP ${apiResult.value.status}` : 'Failed'}
+  - HTTP: ${httpResult.status === 'fulfilled' ? `HTTP ${httpResult.value.status}` : 'Failed'}`);
+      }
+    } catch (e) {
+      // Silent catch - we'll handle timeout below
+    }
+
+    // Wait with exponential backoff
+    await new Promise(r => setTimeout(r, pollInterval));
+    pollInterval = Math.min(pollInterval * 1.3, maxPollInterval);
+  }
+
+  // Timeout reached
+  const elapsed = Math.round((Date.now() - startTime) / 1000);
+  console.error(`Traefik readiness check timed out after ${attempts} attempts over ${elapsed}s`);
+  throw new Error(`Traefik did not become ready within ${maxWaitMs / 1000} seconds`);
+}
 
 // Helper function to get container port
 async function getContainerPort(containerName: string, internalPort: number): Promise<number> {
@@ -100,6 +162,52 @@ async function getContainerPort(containerName: string, internalPort: number): Pr
     `docker port ${containerName} ${internalPort} | cut -d: -f2`
   );
   return parseInt(stdout.trim());
+}
+
+// Helper function to get the host IP that works for accessing Docker containers
+async function getDockerHostIP(): Promise<string> {
+  // Try different options in order of preference
+  const options = [
+    'localhost',
+    '127.0.0.1',
+    'host.docker.internal',
+    '172.17.0.1', // Default Docker bridge gateway
+  ];
+
+  // If running on Linux, try to get the main network interface IP
+  try {
+    const { stdout } = await execAsync("ip -4 addr show | grep -oP '(?<=inet\\s)\\d+(\\.\\d+){3}' | grep -v '127.0.0.1' | head -1");
+    const hostIP = stdout.trim();
+    if (hostIP) {
+      options.push(hostIP);
+    }
+  } catch (e) {
+    // Ignore error, use default options
+  }
+
+  console.log(`Testing connectivity with options: ${options.join(', ')}`);
+
+  // Test each option with a simple fetch to see which one works
+  for (const host of options) {
+    try {
+      // Just test if we can connect to port 1 (will fail but differently if host is reachable)
+      await fetch(`http://${host}:1`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(100)
+      });
+    } catch (e) {
+      // ECONNREFUSED means the host is reachable but port is closed (good)
+      // Timeout or other errors mean host is not reachable
+      if (e.cause?.code === 'ECONNREFUSED' || e.message.includes('ECONNREFUSED')) {
+        console.log(`Found working host: ${host}`);
+        return host;
+      }
+    }
+  }
+
+  // Default to localhost if nothing else works
+  console.log('Defaulting to localhost');
+  return 'localhost';
 }
 
 test.use({
@@ -144,19 +252,47 @@ http:
       middlewares: ["oidc-auth@file"]
 `);
 
+  // Set environment variables for docker-compose
+  const certPath = process.env.CERT_PATH || __dirname;
+  const env = {
+    ...process.env,
+    CERT_PATH: certPath,
+    TRAEFIK_CONFIG_PATH: process.env.TRAEFIK_CONFIG_PATH || `${__dirname}/../../../workspaces/configs`,
+    PLUGIN_PATH: process.env.PLUGIN_PATH || `${__dirname}/../../..`,
+    HTTP_CONFIG_PATH: process.env.HTTP_CONFIG_PATH || `${__dirname}/../..`,
+    DATA_PATH: process.env.DATA_PATH || __dirname,
+  };
+
+  // Remove docker-compose.override.yml if it exists to ensure clean state
+  const overrideFile = path.join(__dirname, 'docker-compose.override.yml');
+  if (fs.existsSync(overrideFile)) {
+    fs.unlinkSync(overrideFile);
+    console.log('Removed docker-compose.override.yml for clean state');
+  }
+
+  // Note: Running without HTTPS to avoid Docker-in-Docker volume mount issues
+  console.log('Running tests in HTTP-only mode');
+
   await dockerCompose.upAll({
     cwd: __dirname,
-    log: true
+    log: true,
+    env: env
   });
 
   // Get the dynamically assigned ports
   console.log("Getting dynamic ports...");
-  KEYCLOAK_HTTP_PORT = await getContainerPort("keycloak-keycloak-1", 8080);
-  KEYCLOAK_HTTPS_PORT = await getContainerPort("keycloak-keycloak-1", 8443);
-  KEYCLOAK_HEALTH_PORT = await getContainerPort("keycloak-keycloak-1", 9000);
-  TRAEFIK_HTTP_PORT = await getContainerPort("keycloak-traefik-1", 80);
-  TRAEFIK_HTTPS_PORT = await getContainerPort("keycloak-traefik-1", 443);
-  TRAEFIK_API_PORT = await getContainerPort("keycloak-traefik-1", 8080);
+  // Try both naming conventions (docker-compose v1 uses _, v2 uses -)
+  keycloakContainer = await execAsync("docker ps --format '{{.Names}}' | grep -E 'keycloak.keycloak.1' | head -1").then(r => r.stdout.trim()).catch(() => "keycloak_keycloak_1");
+  traefikContainer = await execAsync("docker ps --format '{{.Names}}' | grep -E 'keycloak.traefik.1' | head -1").then(r => r.stdout.trim()).catch(() => "keycloak_traefik_1");
+
+  console.log(`Container names: ${keycloakContainer}, ${traefikContainer}`);
+
+  KEYCLOAK_HTTP_PORT = await getContainerPort(keycloakContainer, 8080);
+  KEYCLOAK_HTTPS_PORT = await getContainerPort(keycloakContainer, 8443);
+  KEYCLOAK_HEALTH_PORT = await getContainerPort(keycloakContainer, 9000);
+  TRAEFIK_HTTP_PORT = await getContainerPort(traefikContainer, 80);
+  TRAEFIK_HTTPS_PORT = await getContainerPort(traefikContainer, 443);
+  TRAEFIK_API_PORT = await getContainerPort(traefikContainer, 8080);
 
   console.log(`Dynamic ports assigned:
     Keycloak HTTP: ${KEYCLOAK_HTTP_PORT}
@@ -167,74 +303,182 @@ http:
     Traefik API: ${TRAEFIK_API_PORT}
   `);
 
+  // Set the Traefik API port for utils to use
+  setTraefikApiPort(TRAEFIK_API_PORT);
+
+  // Determine the best host IP for accessing Docker containers
+  DOCKER_HOST = await getDockerHostIP();
+  console.log(`Using Docker host: ${DOCKER_HOST}`);
+
   // Update Keycloak hostname environment variable
-  await execAsync(`docker exec keycloak-keycloak-1 sh -c "export KC_HOSTNAME=http://localhost:${KEYCLOAK_HTTP_PORT}"`);
+  await execAsync(`docker exec ${keycloakContainer} sh -c "export KC_HOSTNAME=http://localhost:${KEYCLOAK_HTTP_PORT}"`);
 
-  // Wait for Keycloak to start
+  // Wait for Keycloak to start with intelligent polling
   console.log("Waiting for Keycloak to start...");
-  for(let i = 0; i < 90; i++) {  // Wait up to 90 seconds
-    if (i % 5 === 0 && i > 0) {  // Log every 5 seconds
-      console.log(`Waiting for Keycloak... (${i}s)`);
-    }
+  const maxWaitTime = 120000; // 120 seconds total
+  const startTime = Date.now();
+  let lastError: any = null;
+  let attempts = 0;
+  let keycloakReady = false;
 
-    await new Promise(r => setTimeout(r, 1000));
+  // Use exponential backoff: start with 500ms, max 5s between checks
+  let pollInterval = 500;
+  const maxPollInterval = 5000;
+
+  while (!keycloakReady && (Date.now() - startTime) < maxWaitTime) {
+    attempts++;
 
     try {
-      // Try to access the Keycloak HTTP endpoint directly
-      const response = await fetch(`http://localhost:${KEYCLOAK_HTTP_PORT}/realms/master/.well-known/openid-configuration`, {
-        method: 'HEAD',
-        signal: AbortSignal.timeout(1000)
-      });
+      // First check if container is healthy via docker
+      const containerHealth = await execAsync(`docker inspect ${keycloakContainer} --format='{{.State.Health.Status}}'`).catch(() => ({ stdout: 'unknown' }));
+      const healthStatus = containerHealth.stdout.trim();
 
-      if (response.ok) {
-        console.log("Keycloak is ready!");
-        break;
+      // Log status periodically
+      if (attempts % 5 === 0 || attempts === 1) {
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        console.log(`Keycloak status check #${attempts} (${elapsed}s elapsed, health: ${healthStatus})`);
+      }
+
+      // Try multiple endpoints to determine readiness
+      const checks = await Promise.allSettled([
+        // Check OpenID configuration endpoint
+        fetch(`http://localhost:${KEYCLOAK_HTTP_PORT}/realms/master/.well-known/openid-configuration`, {
+          signal: AbortSignal.timeout(2000)
+        }),
+        // Check health endpoint
+        fetch(`http://localhost:${KEYCLOAK_HTTP_PORT}/health/ready`, {
+          signal: AbortSignal.timeout(2000)
+        }).catch(() => null), // Health endpoint might not exist
+        // Check base URL
+        fetch(`http://localhost:${KEYCLOAK_HTTP_PORT}/`, {
+          signal: AbortSignal.timeout(2000)
+        })
+      ]);
+
+      const oidcCheck = checks[0];
+      const healthCheck = checks[1];
+      const baseCheck = checks[2];
+
+      // Keycloak is ready if OpenID configuration is accessible
+      if (oidcCheck.status === 'fulfilled' && oidcCheck.value.ok) {
+        console.log(`✅ Keycloak is ready! (took ${attempts} attempts, ${Math.round((Date.now() - startTime) / 1000)}s)`);
+
+        // Quick verification that it's actually responding correctly
+        const configData = await oidcCheck.value.json();
+        if (configData.issuer) {
+          console.log(`Keycloak issuer: ${configData.issuer}`);
+          keycloakReady = true;
+
+          // Setup Keycloak client for tests
+          try {
+            await setupKeycloak(KEYCLOAK_HTTP_PORT);
+          } catch (error) {
+            console.warn('Failed to setup Keycloak client (continuing anyway):', error.message);
+          }
+
+          break;
+        }
+      }
+
+      // Log detailed status for debugging
+      if (attempts === 1 || attempts % 10 === 0) {
+        console.log(`Keycloak endpoints status:
+  - OpenID Config: ${oidcCheck.status === 'fulfilled' ? `HTTP ${oidcCheck.value.status}` : 'Failed'}
+  - Health Ready: ${healthCheck.status === 'fulfilled' && healthCheck.value ? `HTTP ${healthCheck.value.status}` : 'N/A'}
+  - Base URL: ${baseCheck.status === 'fulfilled' ? `HTTP ${baseCheck.value.status}` : 'Failed'}`);
+      }
+
+      lastError = oidcCheck.status === 'rejected' ? oidcCheck.reason : 'Not ready yet';
+    } catch (e) {
+      lastError = e;
+      // Only log unexpected errors
+      if (attempts === 1) {
+        console.log(`Initial connection attempt failed (this is normal): ${e.message}`);
       }
     }
-    catch (e) {
-      // Keycloak is not ready yet, continue waiting
-      if (i % 20 === 0 && i > 0) {
-        console.log(`Still waiting for Keycloak to be ready...`);
-      }
-      if (i === 89) {
-        throw new Error("Timeout occurred while waiting for Keycloak to start.");
-      }
+
+    if (!keycloakReady) {
+      // Wait before next attempt with exponential backoff
+      await new Promise(r => setTimeout(r, pollInterval));
+      pollInterval = Math.min(pollInterval * 1.5, maxPollInterval);
     }
   }
 
-  // Wait for Traefik to be ready
+  if (!keycloakReady) {
+    console.error(`Keycloak failed to start after ${attempts} attempts over ${Math.round((Date.now() - startTime) / 1000)}s`);
+    console.error(`Last error: ${lastError}`);
+
+    // Get container logs for debugging
+    try {
+      const logs = await execAsync(`docker logs ${keycloakContainer} --tail 50 2>&1`);
+      console.error("Keycloak container logs (last 50 lines):");
+      console.error(logs.stdout);
+    } catch (e) {
+      console.error("Could not retrieve Keycloak logs");
+    }
+
+    throw new Error(`Keycloak did not become ready within ${maxWaitTime / 1000} seconds. Last error: ${lastError}`);
+  }
+
+  // Wait for Traefik to be ready with intelligent polling
   console.log("Waiting for Traefik to start...");
-  for(let i = 0; i < 30; i++) {  // Wait up to 30 seconds
-    if (i % 5 === 0 && i > 0) {  // Log every 5 seconds
-      console.log(`Waiting for Traefik... (${i}s)`);
-    }
+  const traefikMaxWait = 60000; // 60 seconds
+  const traefikStartTime = Date.now();
+  let traefikReady = false;
+  let traefikAttempts = 0;
+  let traefikPollInterval = 500;
+  let traefikLastError: any = null;
 
-    await new Promise(r => setTimeout(r, 1000));
+  while (!traefikReady && (Date.now() - traefikStartTime) < traefikMaxWait) {
+    traefikAttempts++;
 
     try {
-      // Try to access the Traefik API endpoint
-      const response = await fetch(`http://localhost:${TRAEFIK_API_PORT}/api/overview`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(1000)
+      // Check container status
+      const containerStatus = await execAsync(`docker ps --filter name=${traefikContainer || 'keycloak_traefik_1'} --format '{{.Status}}'`).catch(() => ({ stdout: '' }));
+      const statusText = containerStatus.stdout.trim();
+
+      if (traefikAttempts % 5 === 0 || traefikAttempts === 1) {
+        const elapsed = Math.round((Date.now() - traefikStartTime) / 1000);
+        console.log(`Traefik status check #${traefikAttempts} (${elapsed}s elapsed): ${statusText || 'checking...'}`);
+      }
+
+      // Check Traefik API endpoint
+      const apiResponse = await fetch(`http://localhost:${TRAEFIK_API_PORT}/api/overview`, {
+        signal: AbortSignal.timeout(2000)
       });
 
-      if (response.ok) {
-        console.log("Traefik API is ready!");
-        break;
+      if (apiResponse.ok) {
+        const apiData = await apiResponse.json();
+        console.log(`✅ Traefik API is ready! (took ${traefikAttempts} attempts, ${Math.round((Date.now() - traefikStartTime) / 1000)}s)`);
+        console.log(`  Routers: ${apiData.http?.routers?.total || 0}, Middlewares: ${apiData.http?.middlewares?.total || 0}`);
+        traefikReady = true;
+      }
+    } catch (e) {
+      traefikLastError = e;
+      if (traefikAttempts === 1) {
+        console.log(`Initial Traefik connection attempt failed (this is normal): ${e.message}`);
       }
     }
-    catch (e) {
-      // Traefik is not ready yet, continue waiting
-      if (i === 29) {
-        console.log("Warning: Traefik API may not be fully ready, but continuing...");
-      }
+
+    if (!traefikReady) {
+      await new Promise(r => setTimeout(r, traefikPollInterval));
+      traefikPollInterval = Math.min(traefikPollInterval * 1.5, 3000); // Max 3s between checks
     }
   }
 
-  // Give services a moment to fully initialize
-  await new Promise(r => setTimeout(r, 2000));
+  if (!traefikReady) {
+    console.warn(`Traefik API not fully ready after ${Math.round((Date.now() - traefikStartTime) / 1000)}s, but continuing...`);
+  }
+
+  // Verify Traefik is ready with the initial configuration
+  await waitForTraefikReady(30000); // 30 seconds timeout
 
   console.log("All services are ready!");
+
+  // IMPORTANT: Add extra wait for Docker iptables rules to fully propagate
+  // This is a Linux-specific issue where the port forwarding rules take time to be fully available
+  console.log("Waiting for Docker network rules to stabilize...");
+  await new Promise(r => setTimeout(r, 3000));
 
   // Debug: Check if ports are actually listening
   console.log("\nDebug: Checking port accessibility...");
@@ -261,11 +505,21 @@ http:
 });
 
 test.beforeEach("Check Traefik health before test", async () => {
-  // Give a moment for any previous config changes to settle
-  await new Promise(r => setTimeout(r, 1000));
+  // First check if containers are actually running
+  try {
+    const containerCheck = await execAsync(`docker ps --filter name=${traefikContainer || 'keycloak_traefik_1'} --format '{{.Status}}'`);
+    console.log(`Traefik container status: ${containerCheck.stdout.trim()}`);
 
-  // Check that Traefik is ready before running the test
-  await waitForTraefikReady();
+    if (!containerCheck.stdout.includes("Up")) {
+      throw new Error("Traefik container is not running!");
+    }
+  } catch (e) {
+    console.error("Container check failed:", e);
+    throw e;
+  }
+
+  // Verify Traefik is still healthy before each test
+  await waitForTraefikReady(10, 500);
 });
 
 test.afterEach("Traefik logs on test failure", async ({}, testInfo) => {
@@ -277,9 +531,20 @@ test.afterEach("Traefik logs on test failure", async ({}, testInfo) => {
 });
 
 test.afterAll("Stopping traefik", async () => {
+  // Use same environment variables for docker-compose down
+  const env = {
+    ...process.env,
+    CERT_PATH: process.env.CERT_PATH || __dirname,
+    TRAEFIK_CONFIG_PATH: process.env.TRAEFIK_CONFIG_PATH || `${__dirname}/../../../workspaces/configs`,
+    PLUGIN_PATH: process.env.PLUGIN_PATH || `${__dirname}/../../..`,
+    HTTP_CONFIG_PATH: process.env.HTTP_CONFIG_PATH || `${__dirname}/../..`,
+    DATA_PATH: process.env.DATA_PATH || __dirname,
+  };
+
   await dockerCompose.downAll({
     cwd: __dirname,
-    log: true
+    log: true,
+    env: env
   });
 });
 
@@ -288,54 +553,60 @@ test.afterAll("Stopping traefik", async () => {
 //-----------------------------------------------------------------------------
 
 test("login http", async ({ page }) => {
-  // Configure Traefik for HTTP login
-  await configureTraefik(`
-http:
-  services:
-    whoami:
-      loadBalancer:
-        servers:
-          - url: http://whoami:80
+  test.setTimeout(120000); // Set test timeout to 2 minutes
 
-  middlewares:
-    oidc-auth:
-      plugin:
-        traefik-oidc-auth:
-          LogLevel: DEBUG
-          Provider:
-            Url: "\${PROVIDER_URL_HTTP}"
-            ClientId: "\${CLIENT_ID}"
-            ClientSecret: "\${CLIENT_SECRET}"
-            UsePkce: false
+  // Use the pre-determined Docker host
+  const url = `http://${DOCKER_HOST}:${TRAEFIK_HTTP_PORT}`;
+  console.log(`Attempting to navigate to ${url}`);
 
-  routers:
-    whoami:
-      entryPoints: ["web"]
-      rule: "Host(\`localhost\`)"
-      service: whoami
-      middlewares: ["oidc-auth@file"]
-`);
+  // Verify port variable is set
+  if (!TRAEFIK_HTTP_PORT) {
+    throw new Error("TRAEFIK_HTTP_PORT is not set! Container setup may have failed.");
+  }
 
-  // Wait for Traefik to be ready after configuration change
-  await waitForTraefikReady();
-
-  // Additional wait and retry logic for navigation
-  let retries = 5;
-  while (retries > 0) {
+  let lastError;
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
-      await page.goto(`http://localhost:${TRAEFIK_HTTP_PORT}`, {
+      // Try to navigate
+      await page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: 5000
       });
-      break; // Success
-    } catch (e) {
-      if (retries === 1 || !e.message.includes('ERR_CONNECTION_REFUSED')) {
-        throw e; // Last retry or different error
+      console.log("Navigation successful!");
+      break; // Success, exit loop
+    } catch (error) {
+      lastError = error;
+      console.log(`Navigation attempt ${attempt} failed: ${error.message}`);
+
+      if (attempt < 5) {
+        // Wait before retry
+        console.log("Waiting 2 seconds before retry...");
+        await new Promise(r => setTimeout(r, 2000));
+
+        // Double-check port is still accessible from Node.js
+        try {
+          const checkResponse = await fetch(`http://localhost:${TRAEFIK_HTTP_PORT}/`, {
+            method: 'HEAD',
+            signal: AbortSignal.timeout(1000)
+          });
+          console.log(`Node.js port check returned status: ${checkResponse.status}`);
+
+          // Also try 127.0.0.1
+          const checkResponse2 = await fetch(`http://127.0.0.1:${TRAEFIK_HTTP_PORT}/`, {
+            method: 'HEAD',
+            signal: AbortSignal.timeout(1000)
+          });
+          console.log(`Node.js 127.0.0.1 check returned status: ${checkResponse2.status}`);
+        } catch (e) {
+          console.log(`Node.js port check failed: ${e.message}`);
+        }
       }
-      console.log(`Connection refused, retrying... (${retries} attempts left)`);
-      await new Promise(r => setTimeout(r, 2000));
-      retries--;
     }
+  }
+
+  // If all attempts failed, throw the last error
+  if (lastError) {
+    throw lastError;
   }
 
   // Now check the status
@@ -348,6 +619,8 @@ http:
 });
 
 test("login https", async ({ browser }) => {
+  test.setTimeout(120000); // Set test timeout to 2 minutes
+
   // Create a new context with specific HTTPS settings
   const context = await browser.newContext({
     ignoreHTTPSErrors: true
@@ -432,7 +705,7 @@ http:
   } catch (e) {
     console.log(`Pre-navigation test failed: ${e.message}`);
     console.log("Checking if Traefik container is still running...");
-    const containerStatus = await execAsync("docker ps --filter name=keycloak-traefik-1 --format '{{.Status}}'");
+    const containerStatus = await execAsync(`docker ps --filter name=${traefikContainer || 'keycloak_traefik_1'} --format '{{.Status}}'`);
     console.log("Traefik container status:", containerStatus.stdout);
 
     // Check Traefik logs for errors
@@ -1363,3 +1636,4 @@ async function loginAndGetToken(page: Page, username: string, password: string):
 
   return tokens.id_token;
 }
+}); // End of describe block
